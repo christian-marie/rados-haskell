@@ -4,7 +4,9 @@ module System.Rados.Base
     confReadFile,
     connect,
     newIOContext,
-    newCompletion
+    newCompletion,
+    waitForComplete,
+    waitForSafe
 ) where
 
 import qualified System.Rados.FFI as F
@@ -98,6 +100,28 @@ newCompletion = do
     checkError "c_rados_aio_create_completion" $
         F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr
     newForeignPtr F.c_rados_aio_release =<< peek completion_ptr
+
+-- |
+-- Block until a completion is complete. I.e. the operation associated with
+-- the completion is at least in memory on all replicas.
+--
+-- Calls rados_aio_wait_for_complete
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_complete
+waitForComplete :: Completion -> IO ()
+waitForComplete completion = void $
+    withForeignPtr completion $ \rados_completion_t_ptr ->
+        F.c_rados_aio_wait_for_complete rados_completion_t_ptr
+        
+-- |
+-- Block until a completion is safe. I.e. the operation associated with
+-- the completion is on stable storage on all replicas.
+--
+-- Calls rados_aio_wait_for_safe
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_safe
+waitForSafe :: Completion -> IO ()
+waitForSafe completion = void $
+    withForeignPtr completion $ \rados_completion_t_ptr ->
+        F.c_rados_aio_wait_for_complete rados_completion_t_ptr
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed toi strerror.

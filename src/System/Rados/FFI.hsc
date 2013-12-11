@@ -57,3 +57,9 @@ foreign import ccall unsafe "librados.h &rados_aio_release"
 
 foreign import ccall unsafe "string.h strerror"
     c_strerror :: Errno -> IO (Ptr CChar)
+
+foreign import ccall unsafe "librados.h rados_aio_wait_for_complete"
+    c_rados_aio_wait_for_complete :: Ptr RadosCompletionT -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_aio_wait_for_safe"
+    c_rados_aio_wait_for_safe :: Ptr RadosCompletionT -> IO CInt
