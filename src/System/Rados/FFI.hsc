@@ -69,3 +69,16 @@ foreign import ccall unsafe "librados.h rados_aio_is_complete"
 
 foreign import ccall unsafe "librados.h rados_aio_is_safe"
     c_rados_aio_is_safe :: Ptr RadosCompletionT -> IO CInt
+
+-- int rados_aio_write(rados_ioctx_t io, const char *oid,
+-- 		    rados_completion_t completion,
+-- 		    const char *buf, size_t len, uint64_t off);
+
+foreign import ccall unsafe "librados.h rados_aio_write"
+    c_rados_aio_write :: Ptr RadosIOCtxT 
+    			 -> CString
+			 -> Ptr RadosCompletionT
+			 -> CString
+			 -> CSize
+			 -> CULLong
+			 -> IO Errno

@@ -9,6 +9,7 @@ module System.Rados.Base
     waitForSafe,
     isSafe,
     isComplete,
+    asyncWrite,
 ) where
 
 import qualified System.Rados.FFI as F
@@ -16,6 +17,7 @@ import Data.ByteString as B
 import Foreign hiding (void)
 import Foreign.C.String
 import Foreign.C.Error
+import Foreign.C.Types
 import Control.Applicative
 import Control.Monad (void)
 
@@ -138,14 +140,42 @@ isComplete completion = withForeignPtr completion $ \rados_completion_t_ptr ->
 -- Is the operation associated with this completion in stable storage on all
 -- replicas?
 --
--- Cals rados_aio_is_safe:
+-- Calls rados_aio_is_safe:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_safe
 isSafe :: Completion -> IO (Bool)
 isSafe completion = withForeignPtr completion $ \rados_completion_t_ptr ->
         (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
+-- |
+-- From right to left, this function reads as:
+-- "Write ByteString bytes to Word64 offset at oid ByteString, notifying this
+-- Completion and using this IOContext"
+--
+-- Returns the number of bytes written.
+-- 
+-- Calls rados_aio_write:
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_write
+asyncWrite :: IOContext
+              -> Completion
+              -> B.ByteString
+              -> Word64
+              -> B.ByteString
+              -> IO Int
+asyncWrite ioctx completion oid offset bs =
+    withForeignPtr ioctx $ \ioctxt_ptr ->
+    withForeignPtr completion $ \rados_completion_t_ptr ->
+    B.useAsCString oid $ \c_oid ->
+    B.useAsCStringLen bs $ \(c_buf, len) -> do
+        let c_offset = CULLong offset
+        let c_len = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_aio_write" $ F.c_rados_aio_write
+            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
+        return $ fromIntegral n
+        
+    
+
 -- Handle a ceph Errno, which is an errno that must be negated before being
--- passed toi strerror.
+-- passed to strerror.
 checkError :: String -> IO Errno -> IO Errno
 checkError desc action = do
     e@(Errno n) <- action
