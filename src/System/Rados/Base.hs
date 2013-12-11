@@ -6,7 +6,9 @@ module System.Rados.Base
     newIOContext,
     newCompletion,
     waitForComplete,
-    waitForSafe
+    waitForSafe,
+    isSafe,
+    isComplete,
 ) where
 
 import qualified System.Rados.FFI as F
@@ -20,7 +22,7 @@ import Control.Monad (void)
 -- An opaque pointer to a rados_t structure.
 type ClusterHandle = ForeignPtr F.RadosT
 type IOContext     = ForeignPtr F.RadosIOCtxT
-type Completion    = ForeignPtr F.RadosCompletionT -- TODO, confirm that librados cleans this up
+type Completion    = ForeignPtr F.RadosCompletionT
 
 -- |
 -- Attempt to create a new ClusterHandle, taking an optional id.
@@ -105,7 +107,7 @@ newCompletion = do
 -- Block until a completion is complete. I.e. the operation associated with
 -- the completion is at least in memory on all replicas.
 --
--- Calls rados_aio_wait_for_complete
+-- Calls rados_aio_wait_for_complete:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_complete
 waitForComplete :: Completion -> IO ()
 waitForComplete completion = void $
@@ -116,12 +118,31 @@ waitForComplete completion = void $
 -- Block until a completion is safe. I.e. the operation associated with
 -- the completion is on stable storage on all replicas.
 --
--- Calls rados_aio_wait_for_safe
+-- Calls rados_aio_wait_for_safe:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_safe
 waitForSafe :: Completion -> IO ()
 waitForSafe completion = void $
     withForeignPtr completion $ \rados_completion_t_ptr ->
         F.c_rados_aio_wait_for_complete rados_completion_t_ptr
+
+-- |
+-- Is the operation associated with this completion in memory on all replicas?
+--
+-- Cals rados_aio_is_complete:
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_complete
+isComplete :: Completion -> IO (Bool)
+isComplete completion = withForeignPtr completion $ \rados_completion_t_ptr ->
+        (/= 0) <$> F.c_rados_aio_is_complete rados_completion_t_ptr
+
+-- |
+-- Is the operation associated with this completion in stable storage on all
+-- replicas?
+--
+-- Cals rados_aio_is_safe:
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_safe
+isSafe :: Completion -> IO (Bool)
+isSafe completion = withForeignPtr completion $ \rados_completion_t_ptr ->
+        (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed toi strerror.

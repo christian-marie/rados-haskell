@@ -63,3 +63,9 @@ foreign import ccall unsafe "librados.h rados_aio_wait_for_complete"
 
 foreign import ccall unsafe "librados.h rados_aio_wait_for_safe"
     c_rados_aio_wait_for_safe :: Ptr RadosCompletionT -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_aio_is_complete"
+    c_rados_aio_is_complete :: Ptr RadosCompletionT -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_aio_is_safe"
+    c_rados_aio_is_safe :: Ptr RadosCompletionT -> IO CInt
