@@ -4,7 +4,6 @@ module System.Rados.Base
     confReadFile,
     connect,
     newIOContext,
-    newCompletion',
     newCompletion
 ) where
 
@@ -84,42 +83,21 @@ newIOContext handle bs = B.useAsCString bs $ \cstr -> do
             F.c_rados_ioctx_create rados_t_ptr cstr ioctxt_ptr
         newForeignPtr F.c_rados_ioctx_destroy =<< peek ioctxt_ptr
 
--- Attempt to create a new completion without any callbacks.
-newCompletion :: IO Completion
-newCompletion = newCompletion' Nothing Nothing
-
 -- |
--- TODO: This function currently leaks memory due to not cleaning up generated
--- FunPtrs. It needs to pass the FunPtrs through to void *args of
--- c_rados_aio_create_completion and then wrap the generated callback with a
--- call to freeHaskellFunPtr. There are more pressing things to do currently,
--- so don't use callbacks unless leaky memory is okay.
---
 -- Attempt to create a new completion that can be used with async IO actions.
 -- This completion will be released automatically when it is garbage collected.
---
--- Optional callbacks are for complete and safe states respectively. 
---
--- Complete means that the operation is in memory on all replicas.
--- 
--- Safe means that the operation is on stable storage on all replicas.
 --
 -- Calls rados_aio_create_completion:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_create_completion
 --
 -- And rados_aio_release on cleanup:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_release
-newCompletion' :: Maybe (IO ()) -> Maybe (IO ()) -> IO Completion
-newCompletion' complete_cb safe_cb = do
+newCompletion :: IO Completion
+newCompletion = do
     completion_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
-    w_complete_cb <- wrap complete_cb
-    w_safe_cb <- wrap safe_cb
     checkError "c_rados_aio_create_completion" $
-        F.c_rados_aio_create_completion nullPtr w_complete_cb w_safe_cb completion_ptr
+        F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr
     newForeignPtr F.c_rados_aio_release =<< peek completion_ptr
-  where
-    wrap ma     = maybe (return $ nullFunPtr) mkFunPtr ma
-    mkFunPtr a  = F.c_wrap_callback (\_ _ -> a )
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed toi strerror.
