@@ -10,6 +10,7 @@ module System.Rados.Base
     isSafe,
     isComplete,
     asyncWrite,
+    write,
 ) where
 
 import qualified System.Rados.FFI as F
@@ -149,7 +150,7 @@ isSafe completion = withForeignPtr completion $ \rados_completion_t_ptr ->
 -- |
 -- From right to left, this function reads as:
 -- "Write ByteString bytes to Word64 offset at oid ByteString, notifying this
--- Completion and using this IOContext"
+-- Completion, all within this IOContext"
 --
 -- Returns the number of bytes written.
 -- 
@@ -171,8 +172,31 @@ asyncWrite ioctx completion oid offset bs =
         (Errno n) <- checkError "c_rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
         return $ fromIntegral n
-        
-    
+-- |
+-- From right to left, this function reads as:
+-- "Write ByteString bytes to Word64 offset at oid ByteString within this
+-- IOContext"
+--
+-- Returns the number of bytes written.
+-- 
+-- Calls rados_aio_write:
+-- http://ceph.com/docs/master/rados/api/librados/#rados_write
+write :: IOContext
+         -> B.ByteString
+         -> Word64
+         -> B.ByteString
+         -> IO Int
+-- Is 'write' the best of names? Maybe.
+write ioctx oid offset bs =
+    withForeignPtr ioctx $ \ioctxt_ptr ->
+    B.useAsCString oid $ \c_oid ->
+    B.useAsCStringLen bs $ \(c_buf, len) -> do
+        let c_offset = CULLong offset
+        let c_len = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_write" $ F.c_rados_write
+            ioctxt_ptr c_oid c_buf c_len c_offset
+        return $ fromIntegral n
+
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed to strerror.
