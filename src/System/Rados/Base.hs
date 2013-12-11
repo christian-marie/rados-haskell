@@ -3,7 +3,8 @@ module System.Rados.Base
     newClusterHandle,
     confReadFile,
     connect,
-    newIOContext
+    newIOContext,
+    newCompletion
 ) where
 
 import qualified System.Rados.FFI as F
@@ -15,8 +16,9 @@ import Control.Applicative
 import Control.Monad (void)
 
 -- An opaque pointer to a rados_t structure.
-type ClusterHandle = ForeignPtr F.RadosT
-type IOContext = ForeignPtr F.IOCtxT
+type ClusterHandle      = ForeignPtr F.RadosT
+type IOContext          = ForeignPtr F.RadosIOCtxT
+type Completion         = Ptr F.RadosCompletionT -- TODO, confirm that librados cleans this up
 
 -- |
 -- Attempt to create a new ClusterHandle, taking an optional id.
@@ -81,6 +83,29 @@ newIOContext handle bs = B.useAsCString bs $ \cstr -> do
             F.c_rados_ioctx_create rados_t_ptr cstr ioctxt_ptr
         newForeignPtr F.c_rados_ioctx_destroy =<< peek ioctxt_ptr
 
+-- |
+-- Attempt to create a new completion that can be used with async IO actions.
+--
+-- Optional callbacks are for complete and safe states respectively.
+--
+-- Complete means that the operation is in memory on all replicas.
+-- 
+-- Safe means that the operation is on stable storage on all replicas.
+--
+-- Calls c_rados_aio_create_completion:
+-- http://ceph.com/docs/master/rados/api/librados/#rados_aio_create_completion
+newCompletion :: Maybe (IO ()) -> Maybe (IO ()) -> IO Completion
+newCompletion complete_cb safe_cb = do
+    completion_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
+    w_complete_cb <- wrap complete_cb
+    w_safe_cb <- wrap safe_cb
+    checkError "c_rados_aio_create_completion" $
+        F.c_rados_aio_create_completion nullPtr w_complete_cb w_safe_cb completion_ptr
+    peek completion_ptr
+  where
+    wrap ma     = maybe (return $ nullFunPtr) mkFunPtr ma
+    mkFunPtr a  = F.c_wrap_callback (\_ _ -> a )
+    
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed toi strerror.
