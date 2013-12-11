@@ -4,6 +4,7 @@ module System.Rados.Base
     confReadFile,
     connect,
     newIOContext,
+    newCompletion',
     newCompletion
 ) where
 
@@ -83,10 +84,20 @@ newIOContext handle bs = B.useAsCString bs $ \cstr -> do
             F.c_rados_ioctx_create rados_t_ptr cstr ioctxt_ptr
         newForeignPtr F.c_rados_ioctx_destroy =<< peek ioctxt_ptr
 
+-- Attempt to create a new completion without any callbacks.
+newCompletion :: IO Completion
+newCompletion = newCompletion' Nothing Nothing
+
 -- |
+-- TODO: This function currently leaks memory due to not cleaning up generated
+-- FunPtrs. It needs to pass the FunPtrs through to void *args of
+-- c_rados_aio_create_completion and then wrap the generated callback with a
+-- call to freeHaskellFunPtr. There are more pressing things to do currently,
+-- so don't use callbacks unless leaky memory is okay.
+--
 -- Attempt to create a new completion that can be used with async IO actions.
 --
--- Optional callbacks are for complete and safe states respectively.
+-- Optional callbacks are for complete and safe states respectively. 
 --
 -- Complete means that the operation is in memory on all replicas.
 -- 
@@ -94,8 +105,8 @@ newIOContext handle bs = B.useAsCString bs $ \cstr -> do
 --
 -- Calls c_rados_aio_create_completion:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_aio_create_completion
-newCompletion :: Maybe (IO ()) -> Maybe (IO ()) -> IO Completion
-newCompletion complete_cb safe_cb = do
+newCompletion' :: Maybe (IO ()) -> Maybe (IO ()) -> IO Completion
+newCompletion' complete_cb safe_cb = do
     completion_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
     w_complete_cb <- wrap complete_cb
     w_safe_cb <- wrap safe_cb
@@ -105,7 +116,6 @@ newCompletion complete_cb safe_cb = do
   where
     wrap ma     = maybe (return $ nullFunPtr) mkFunPtr ma
     mkFunPtr a  = F.c_wrap_callback (\_ _ -> a )
-    
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed toi strerror.
