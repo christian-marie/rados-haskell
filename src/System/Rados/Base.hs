@@ -10,7 +10,8 @@ module System.Rados.Base
     isSafe,
     isComplete,
     asyncWrite,
-    write,
+    syncWrite,
+    syncRead,
 ) where
 
 import qualified System.Rados.FFI as F
@@ -168,7 +169,7 @@ asyncWrite ioctx completion oid offset bs =
     B.useAsCString oid $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_offset = CULLong offset
-        let c_len = CSize $ fromIntegral len
+        let c_len    = CSize $ fromIntegral len
         (Errno n) <- checkError "c_rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
         return $ fromIntegral n
@@ -181,22 +182,39 @@ asyncWrite ioctx completion oid offset bs =
 -- 
 -- Calls rados_aio_write:
 -- http://ceph.com/docs/master/rados/api/librados/#rados_write
-write :: IOContext
+syncWrite :: IOContext
          -> B.ByteString
          -> Word64
          -> B.ByteString
          -> IO Int
--- Is 'write' the best of names? Maybe.
-write ioctx oid offset bs =
+syncWrite ioctx oid offset bs =
     withForeignPtr ioctx $ \ioctxt_ptr ->
     B.useAsCString oid $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_offset = CULLong offset
-        let c_len = CSize $ fromIntegral len
+        let c_len    = CSize $ fromIntegral len
         (Errno n) <- checkError "c_rados_write" $ F.c_rados_write
             ioctxt_ptr c_oid c_buf c_len c_offset
         return $ fromIntegral n
 
+-- |
+-- Read length bytes into a ByteString, using context and oid.
+--
+-- context -> oid -> length -> offset -> IO read_bytes
+syncRead :: IOContext
+    -> B.ByteString
+    -> Word64
+    -> Word64
+    -> IO B.ByteString
+syncRead ioctx oid offset len =
+    withForeignPtr ioctx $ \ioctxt_ptr ->
+    allocaBytes (fromIntegral len) $ \c_buf ->
+    B.useAsCString oid $ \c_oid -> do
+        let c_offset = CULLong offset
+        let c_len    = CSize  len
+        checkError "c_rados_read" $ F.c_rados_read
+            ioctxt_ptr c_oid c_buf c_len c_offset
+        B.packCString c_buf
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed to strerror.

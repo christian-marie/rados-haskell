@@ -93,4 +93,15 @@ foreign import ccall unsafe "librados.h rados_aio_write"
 	             -> CULLong
 	             -> IO Errno
 
-
+-- I do not currently see how to do the async version of this, being that it
+-- continues writing to buf after it returns.
+--
+-- int rados_read(rados_ioctx_t io, const char *oid, char *buf,
+--	size_t len, uint64_t off);
+foreign import ccall unsafe "librados.h rados_aio_read"
+    c_rados_read :: Ptr RadosIOCtxT 
+    	            -> CString
+	            -> CString
+	            -> CSize
+	            -> CULLong
+	            -> IO Errno
