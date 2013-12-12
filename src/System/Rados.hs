@@ -1,10 +1,18 @@
 module System.Rados
 (
-    I.ClusterHandle,
+    -- *Types
+    I.Connection,
     I.Completion,
     I.Pool,
+    -- *General usage
     withConnection,
     withContext,
+    -- *Syncronous IO
+    I.syncRead,
+    I.syncWrite,
+    I.syncWriteFull,
+    I.syncAppend,
+    -- *Configuration
     readConfig,
 )
 where
@@ -14,25 +22,29 @@ import qualified Data.ByteString as B
 import Control.Exception (bracket)
 
 -- |
--- Run an action with a 'ClusterHandle' to ceph, cleanup is handled via 'bracket'.
+-- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
 --
--- First argument is an action that configures the handle prior to connection.
+-- First argument is an optional user to connect as.
+--
+-- Second argument is an action that configures the handle prior to connection.
+-- 
+-- Third argument is the action to run with the connection made.
 --
 -- @
--- withConnection (readConfig "ceph.conf") $ \connection -> do
+-- withConnection (readConfig \"ceph.conf\") $ \\connection -> do
 --     ...
 -- @
 withConnection :: Maybe B.ByteString
-                  -> (I.ClusterHandle -> IO ()) -- configure action
-                  -> (I.ClusterHandle -> IO a) -- user action
+                  -> (I.Connection -> IO ()) -- configure action
+                  -> (I.Connection -> IO a) -- user action
                   -> IO a
 withConnection user configure action =
     bracket
-        (do h <- I.newClusterHandle user
+        (do h <- I.newConnection user
             configure h
             I.connect h
             return h)
-        I.cleanupClusterHandle
+        I.cleanupConnection
         action
 
 -- |
@@ -41,10 +53,10 @@ withConnection user configure action =
 --
 -- @
 -- ...
---     withContext connection "pool42" $ \pool ->
+--     withContext connection \"pool42\" $ \\pool ->
 --         ...
 -- @
-withContext :: I.ClusterHandle -> B.ByteString -> (I.Pool -> IO a) -> IO a
+withContext :: I.Connection -> B.ByteString -> (I.Pool -> IO a) -> IO a
 withContext connection pool action =
     bracket
         (I.newPool connection pool)
@@ -52,8 +64,10 @@ withContext connection pool action =
         action
 
 --- |
--- Read a config from a relative or absolute 'FilePath' into a 'ClusterHandle'.
+-- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
 --
 -- Intended for use with 'withConnection'.
-readConfig :: FilePath -> I.ClusterHandle -> IO ()
+readConfig :: FilePath -> I.Connection -> IO ()
 readConfig = flip I.confReadFile
+
+

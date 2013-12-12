@@ -4,12 +4,12 @@
 module System.Rados.Internal
 (
 -- *Type definitions
-    ClusterHandle,
+    Connection,
     Completion,
     Pool,
 -- *Connecting
-    newClusterHandle,
-    cleanupClusterHandle,
+    newConnection,
+    cleanupConnection,
     confReadFile,
     connect,
 -- *Writing
@@ -42,90 +42,90 @@ import Foreign.C.Types
 import Control.Applicative
 import Control.Monad (void)
 
--- | An opaque pointer to a rados_t.
-newtype ClusterHandle = ClusterHandle (Ptr F.RadosT)
--- | An opaque pointer to a rados_ioctx_t.
+-- | A connection to a rados cluster, required to get a 'Pool'
+newtype Connection = Connection (Ptr F.RadosT)
+-- | An IO context with a rados pool.
 newtype Pool     = Pool (Ptr F.RadosIOCtxT)
--- | An opaque pointer to a rados_completion_t.
+-- | A handle to query the status of an asynchronous action
 newtype Completion    = Completion (Ptr F.RadosCompletionT)
 
 -- |
--- Attempt to create a new 'ClusterHandle, taking an optional id.
--- You must run cleanupClusterHandle on the handle when you are done with it.
+-- Attempt to create a new 'Connection, taking an optional id.
+-- You must run cleanupConnection on the handle when you are done with it.
 --
 -- @
--- h  <- newClusterHandle Nothing
--- h' <- newClusterHandle $ Just \"admin\"
+-- h  <- newConnection Nothing
+-- h' <- newConnection $ Just \"admin\"
 --
--- cleanupClusterHandle h
--- cleanupClusterHandle h'
+-- cleanupConnection h
+-- cleanupConnection h'
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_create>
-newClusterHandle :: Maybe B.ByteString -> IO (ClusterHandle)
-newClusterHandle maybe_bs =
+newConnection :: Maybe B.ByteString -> IO (Connection)
+newConnection maybe_bs =
     alloca $ \rados_t_ptr_ptr -> do
         checkError "c_rados_create" $ case maybe_bs of
             Nothing ->
                 F.c_rados_create rados_t_ptr_ptr nullPtr
             Just bs -> B.useAsCString bs $ \cstr ->
                 F.c_rados_create rados_t_ptr_ptr cstr
-        ClusterHandle <$> peek rados_t_ptr_ptr
+        Connection <$> peek rados_t_ptr_ptr
 
 -- |
 -- Clean up a cluster handle.
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_shutdown>
-cleanupClusterHandle :: ClusterHandle -> IO ()
-cleanupClusterHandle (ClusterHandle rados_t_ptr) =
+cleanupConnection :: Connection -> IO ()
+cleanupConnection (Connection rados_t_ptr) =
     F.c_rados_shutdown rados_t_ptr
 
 -- |
--- Load a config specified by 'FilePath' into a given 'ClusterHandle.
+-- Load a config specified by 'FilePath' into a given 'Connection.
 --
 -- @
--- h <- newClusterHandle Nothing
+-- h <- newConnection Nothing
 -- confReadFile h \"\/etc\/config\"
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_conf_read_file>
-confReadFile :: ClusterHandle -> FilePath -> IO ()
-confReadFile (ClusterHandle rados_t_ptr) fp =
+confReadFile :: Connection -> FilePath -> IO ()
+confReadFile (Connection rados_t_ptr) fp =
     checkError_ "c_rados_conf_read_file" $ withCString fp $ \cstr ->
         F.c_rados_conf_read_file rados_t_ptr cstr
 
 -- |
--- Attempt to connect a configured 'ClusterHandle.
+-- Attempt to connect a configured 'Connection.
 --
 -- @
--- h <- newClusterHandle Nothing
+-- h <- newConnection Nothing
 -- confReadFile h \"/etc/config\"
 -- connect h
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_connect>
-connect :: ClusterHandle -> IO ()
-connect (ClusterHandle rados_t_ptr) =
+connect :: Connection -> IO ()
+connect (Connection rados_t_ptr) =
     checkError_ "c_rados_connect" $ F.c_rados_connect rados_t_ptr
 
 -- |
--- Attempt to create a new 'Pool, requires a valid 'ClusterHandle and
+-- Attempt to create a new 'Pool, requires a valid 'Connection and
 -- pool name.
 --
 -- @
--- h <- newClusterHandle Nothing
+-- h <- newConnection Nothing
 -- h ctx <- newPool h "thing"
 -- cleanupPool ctx
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
-newPool :: ClusterHandle -> B.ByteString -> IO (Pool)
-newPool (ClusterHandle rados_t_ptr) bs = 
+newPool :: Connection -> B.ByteString -> IO (Pool)
+newPool (Connection rados_t_ptr) bs = 
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
         checkError "c_rados_ioctx_create" $
@@ -281,28 +281,24 @@ asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |
+-- Write a 'ByteString' to 'Pool', object id and offset.
 --
--- From right to left, this function reads as:
--- Write ByteString buffer to Word64 offset at ByteString oid within this
--- Pool
---
---
--- Usage is the same as 'asyncWrite', without a 'Completion.
+-- Returns the number of bytes written. 
 --
 -- @
 -- ...
--- n <- syncWrite c \"oid\" 42 \"written at offset fourty-two\"
+-- n <- syncWrite Pool \"object_id\" 42 \"written at offset fourty-two\"
 -- @
 --
--- Returns the number of bytes written.
 --
--- Calls rados_aio_write:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_write>
+-- TODO: Should the user check this? Why
+-- would it not be the amount of bytes given? Probably something to do with
+-- running out of space.
 syncWrite :: Pool
-         -> B.ByteString
-         -> Word64
-         -> B.ByteString
-         -> IO Int
+          -> B.ByteString
+          -> Word64
+          -> B.ByteString
+          -> IO Int
 syncWrite (Pool ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
@@ -311,10 +307,11 @@ syncWrite (Pool ioctxt_ptr) oid offset bs =
             ioctxt_ptr c_oid c_buf c_size c_offset
 
 -- |
--- The same as 'syncWrite', but omitting an offset and truncating any object that
--- already exists with that oid.
--- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_write_full>
+-- Write a 'ByteString' to 'Pool' and object id.
+--
+-- This will replace any existing object at the same 'Pool' and object id.
+--
+-- Returns the number of bytes written.
 syncWriteFull :: Pool
          -> B.ByteString
          -> B.ByteString
@@ -326,9 +323,9 @@ syncWriteFull (Pool ioctxt_ptr) oid bs =
             ioctxt_ptr c_oid c_buf len
 
 -- |
--- Same calling convention as 'syncWriteFull', appends to an object.
--- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_append>
+-- Append a 'ByteString' to 'Pool' and object id.
+--
+-- Returns the number of bytes written.
 syncAppend :: Pool
          -> B.ByteString
          -> B.ByteString
@@ -340,24 +337,26 @@ syncAppend (Pool ioctxt_ptr) oid bs =
             ioctxt_ptr c_oid c_buf c_size
 
 -- |
--- Read length bytes into a ByteString, using context and oid.
+-- Read from 'Pool', object ID and offset n bytes.
 --
 -- There is no async read provided by this binding.
 --
--- context -> oid -> length -> offset -> IO read_bytes
+-- TODO: Document a multithreaded example to compensate for no async. This may
+-- or may not require to be called from the same OS thread. Test and document
+-- that.
 --
 -- @
--- ...
--- bs <- syncRead ctx \"oid\" 100 42
+--         ...
+--         -- Read 100 bytes into bs from offset 42
+--         bs <- syncRead pool \"object_id\" 42 100 
+--         ...
 -- @
---
--- The above will place 100 bytes into bs, read from an offset of 42
 syncRead :: Pool
     -> B.ByteString
     -> Word64
     -> Word64
     -> IO B.ByteString
-syncRead (Pool ioctxt_ptr) oid offset len =
+syncRead (Pool ioctxt_ptr) oid len offset =
     allocaBytes (fromIntegral len) $ \c_buf ->
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
