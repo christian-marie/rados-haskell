@@ -242,11 +242,10 @@ asyncWrite :: IOContext
               -> IO Int
 asyncWrite (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset bs =
     B.useAsCString oid        $ \c_oid ->
-    B.useAsCStringLen bs      $ \(c_buf, len) -> do
+    useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
-        let c_len    = CSize $ fromIntegral len
         checkError "c_rados_aio_write" $ F.c_rados_aio_write
-            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
+            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size c_offset
 -- |
 -- Same calling convention as asyncWrite, simply omitting an offset.
 -- This will truncate any existing object.
@@ -260,11 +259,10 @@ asyncWriteFull :: IOContext
               -> IO Int
 asyncWriteFull (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
-    B.useAsCStringLen bs      $ \(c_buf, len) -> do
-        let c_len    = CSize $ fromIntegral len
+    useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_aio_write_full" $ 
             F.c_rados_aio_write_full
-                ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
+                ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |
 -- Same calling convention as asyncWriteFull, simply appends to an object.
@@ -278,10 +276,9 @@ asyncAppend :: IOContext
               -> IO Int
 asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
-    B.useAsCStringLen bs      $ \(c_buf, len) -> do
-        let c_len    = CSize $ fromIntegral len
+    useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_aio_append" $ F.c_rados_aio_append
-            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
+            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |
 --
@@ -308,11 +305,10 @@ syncWrite :: IOContext
          -> IO Int
 syncWrite (IOContext ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
-    B.useAsCStringLen bs $ \(c_buf, len) -> do
+    useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
-        let c_len    = CSize $ fromIntegral len
         checkError "c_rados_write" $ F.c_rados_write
-            ioctxt_ptr c_oid c_buf c_len c_offset
+            ioctxt_ptr c_oid c_buf c_size c_offset
 
 -- |
 -- The same as 'syncWrite', but omitting an offset and truncating any object that
@@ -325,10 +321,9 @@ syncWriteFull :: IOContext
          -> IO Int
 syncWriteFull (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
-    B.useAsCStringLen bs $ \(c_buf, len) -> do
-        let c_len    = CSize $ fromIntegral len
+    useAsCStringCSize bs $ \(c_buf, len) -> do
         checkError "c_rados_write_full" $ F.c_rados_write_full
-            ioctxt_ptr c_oid c_buf c_len 
+            ioctxt_ptr c_oid c_buf len
 
 -- |
 -- Same calling convention as 'syncWriteFull', appends to an object.
@@ -340,10 +335,9 @@ syncAppend :: IOContext
          -> IO Int
 syncAppend (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
-    B.useAsCStringLen bs $ \(c_buf, len) -> do
-        let c_len    = CSize $ fromIntegral len
+    useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_append" $ F.c_rados_append
-            ioctxt_ptr c_oid c_buf c_len 
+            ioctxt_ptr c_oid c_buf c_size
 
 -- |
 -- Read length bytes into a ByteString, using context and oid.
@@ -371,3 +365,7 @@ syncRead (IOContext ioctxt_ptr) oid offset len =
         read_bytes <- checkError "c_rados_read" $ F.c_rados_read
             ioctxt_ptr c_oid c_buf c_len c_offset
         B.packCStringLen (c_buf, read_bytes)
+
+useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a 
+useAsCStringCSize bs f =
+    B.useAsCStringLen bs $ \(cstr, len) -> f (cstr, (CSize . fromIntegral) len)
