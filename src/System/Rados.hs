@@ -2,7 +2,7 @@ module System.Rados
 (
     I.ClusterHandle,
     I.Completion,
-    I.IOContext,
+    I.Pool,
     withConnection,
     withContext,
     readConfig,
@@ -36,7 +36,7 @@ withConnection user configure action =
         action
 
 -- |
--- Open a 'IOContext' with ceph and perform an action with it, cleaning up with
+-- Open a 'Pool' with ceph and perform an action with it, cleaning up with
 -- 'bracket'.
 --
 -- @
@@ -44,11 +44,11 @@ withConnection user configure action =
 --     withContext connection "pool42" $ \pool ->
 --         ...
 -- @
-withContext :: I.ClusterHandle -> B.ByteString -> (I.IOContext -> IO a) -> IO a
+withContext :: I.ClusterHandle -> B.ByteString -> (I.Pool -> IO a) -> IO a
 withContext connection pool action =
     bracket
-        (I.newIOContext connection pool)
-        I.cleanupIOContext
+        (I.newPool connection pool)
+        I.cleanupPool
         action
 
 --- |

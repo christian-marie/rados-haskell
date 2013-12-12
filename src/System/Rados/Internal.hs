@@ -6,15 +6,15 @@ module System.Rados.Internal
 -- *Type definitions
     ClusterHandle,
     Completion,
-    IOContext,
+    Pool,
 -- *Connecting
     newClusterHandle,
     cleanupClusterHandle,
     confReadFile,
     connect,
 -- *Writing
-    newIOContext,
-    cleanupIOContext,
+    newPool,
+    cleanupPool,
 -- **Synchronous
     syncWrite,
     syncWriteFull,
@@ -36,7 +36,7 @@ import qualified System.Rados.FFI as F
 import System.Rados.Error(checkError, checkError_)
 
 import Data.ByteString as B
-import Foreign hiding (void)
+import Foreign hiding (void, Pool, newPool)
 import Foreign.C.String
 import Foreign.C.Types
 import Control.Applicative
@@ -45,7 +45,7 @@ import Control.Monad (void)
 -- | An opaque pointer to a rados_t.
 newtype ClusterHandle = ClusterHandle (Ptr F.RadosT)
 -- | An opaque pointer to a rados_ioctx_t.
-newtype IOContext     = IOContext (Ptr F.RadosIOCtxT)
+newtype Pool     = Pool (Ptr F.RadosIOCtxT)
 -- | An opaque pointer to a rados_completion_t.
 newtype Completion    = Completion (Ptr F.RadosCompletionT)
 
@@ -113,32 +113,32 @@ connect (ClusterHandle rados_t_ptr) =
     checkError_ "c_rados_connect" $ F.c_rados_connect rados_t_ptr
 
 -- |
--- Attempt to create a new 'IOContext, requires a valid 'ClusterHandle and
+-- Attempt to create a new 'Pool, requires a valid 'ClusterHandle and
 -- pool name.
 --
 -- @
 -- h <- newClusterHandle Nothing
--- h ctx <- newIOContext h "thing"
--- cleanupIOContext ctx
+-- h ctx <- newPool h "thing"
+-- cleanupPool ctx
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
-newIOContext :: ClusterHandle -> B.ByteString -> IO (IOContext)
-newIOContext (ClusterHandle rados_t_ptr) bs = 
+newPool :: ClusterHandle -> B.ByteString -> IO (Pool)
+newPool (ClusterHandle rados_t_ptr) bs = 
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
         checkError "c_rados_ioctx_create" $
             F.c_rados_ioctx_create rados_t_ptr cstr ioctx_ptr_ptr
-        IOContext <$> peek ioctx_ptr_ptr
+        Pool <$> peek ioctx_ptr_ptr
 
 -- |
--- Clean up an IOContext
+-- Clean up an Pool
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_destroy>
-cleanupIOContext :: IOContext -> IO ()
-cleanupIOContext (IOContext ptr) = F.c_rados_ioctx_destroy ptr
+cleanupPool :: Pool -> IO ()
+cleanupPool (Pool ptr) = F.c_rados_ioctx_destroy ptr
 
 -- |
 -- Attempt to create a new 'Completion' that can be used with async IO actions.
@@ -223,24 +223,24 @@ isSafe (Completion rados_completion_t_ptr) =
 -- From right to left, this function reads as:
 --
 -- Write ByteString bytes to Word64 offset at oid ByteString, notifying this
--- Completion, all within this IOContext
+-- Completion, all within this Pool
 --
 -- @
 -- ...
--- ctx <- newIOContext h \"thing\"
+-- ctx <- newPool h \"thing\"
 -- n <- asyncWrite ctx c "oid" 42 \"written at offset fourty-two\"
 -- putStrLn $ "I wrote " ++ show n ++ " bytes"
 -- @
 --
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write>
-asyncWrite :: IOContext
+asyncWrite :: Pool
               -> Completion
               -> B.ByteString
               -> Word64
               -> B.ByteString
               -> IO Int
-asyncWrite (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset bs =
+asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
@@ -252,12 +252,12 @@ asyncWrite (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write_full>
-asyncWriteFull :: IOContext
+asyncWriteFull :: Pool
               -> Completion
               -> B.ByteString
               -> B.ByteString
               -> IO Int
-asyncWriteFull (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
+asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_aio_write_full" $ 
@@ -269,12 +269,12 @@ asyncWriteFull (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
-asyncAppend :: IOContext
+asyncAppend :: Pool
               -> Completion
               -> B.ByteString
               -> B.ByteString
               -> IO Int
-asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
+asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_aio_append" $ F.c_rados_aio_append
@@ -284,7 +284,7 @@ asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
 --
 -- From right to left, this function reads as:
 -- Write ByteString buffer to Word64 offset at ByteString oid within this
--- IOContext
+-- Pool
 --
 --
 -- Usage is the same as 'asyncWrite', without a 'Completion.
@@ -298,12 +298,12 @@ asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
 --
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_write>
-syncWrite :: IOContext
+syncWrite :: Pool
          -> B.ByteString
          -> Word64
          -> B.ByteString
          -> IO Int
-syncWrite (IOContext ioctxt_ptr) oid offset bs =
+syncWrite (Pool ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
@@ -315,11 +315,11 @@ syncWrite (IOContext ioctxt_ptr) oid offset bs =
 -- already exists with that oid.
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_write_full>
-syncWriteFull :: IOContext
+syncWriteFull :: Pool
          -> B.ByteString
          -> B.ByteString
          -> IO Int
-syncWriteFull (IOContext ioctxt_ptr) oid bs =
+syncWriteFull (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, len) -> do
         checkError "c_rados_write_full" $ F.c_rados_write_full
@@ -329,11 +329,11 @@ syncWriteFull (IOContext ioctxt_ptr) oid bs =
 -- Same calling convention as 'syncWriteFull', appends to an object.
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_append>
-syncAppend :: IOContext
+syncAppend :: Pool
          -> B.ByteString
          -> B.ByteString
          -> IO Int
-syncAppend (IOContext ioctxt_ptr) oid bs =
+syncAppend (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         checkError "c_rados_append" $ F.c_rados_append
@@ -352,12 +352,12 @@ syncAppend (IOContext ioctxt_ptr) oid bs =
 -- @
 --
 -- The above will place 100 bytes into bs, read from an offset of 42
-syncRead :: IOContext
+syncRead :: Pool
     -> B.ByteString
     -> Word64
     -> Word64
     -> IO B.ByteString
-syncRead (IOContext ioctxt_ptr) oid offset len =
+syncRead (Pool ioctxt_ptr) oid offset len =
     allocaBytes (fromIntegral len) $ \c_buf ->
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
