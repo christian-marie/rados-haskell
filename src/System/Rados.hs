@@ -5,8 +5,19 @@ module System.Rados
     I.Completion,
     I.Pool,
     -- *General usage
+    -- |
+    -- Write an object and then read it back:
+    --
+    -- @
+    -- writeRead :: IO ByteString
+    -- writeRead =
+    --     withConnection Nothing (readConfig \"ceph.conf\") $ \\connection ->
+    --         withPool connection \"magic_pool\" $ \\pool -> do
+    --             syncWriteFull pool \"oid\" \"hai!\"
+    --             syncRead pool \"oid\" 0 4
+    -- @
     withConnection,
-    withContext,
+    withPool,
     -- *Syncronous IO
     I.syncRead,
     I.syncWrite,
@@ -53,11 +64,11 @@ withConnection user configure action =
 --
 -- @
 -- ...
---     withContext connection \"pool42\" $ \\pool ->
+--     withPool connection \"pool42\" $ \\pool ->
 --         ...
 -- @
-withContext :: I.Connection -> B.ByteString -> (I.Pool -> IO a) -> IO a
-withContext connection pool action =
+withPool :: I.Connection -> B.ByteString -> (I.Pool -> IO a) -> IO a
+withPool connection pool action =
     bracket
         (I.newPool connection pool)
         I.cleanupPool
