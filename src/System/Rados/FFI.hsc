@@ -30,7 +30,7 @@ foreign import ccall unsafe "librados.h rados_shutdown"
 foreign import ccall unsafe "librados.h rados_conf_read_file"
     c_rados_conf_read_file :: Ptr RadosT -> CString -> IO Errno
 
-foreign import ccall unsafe "librados.h rados_conf_read_file"
+foreign import ccall unsafe "librados.h rados_connect"
     c_rados_connect :: Ptr RadosT -> IO Errno
 
 foreign import ccall unsafe "librados.h rados_ioctx_create"
