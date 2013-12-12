@@ -17,9 +17,9 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     System.Rados.FFI,
-                       System.Rados.Base
-  -- other-modules:       
+  exposed-modules:     System.Rados.Base
+  other-modules:       System.Rados.FFI
+                       System.Rados.Error
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=4.6 && <4.7,
                        bytestring
