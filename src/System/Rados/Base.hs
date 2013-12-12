@@ -17,6 +17,7 @@ module System.Rados.Base
     newIOContext,
 -- **Synchronous
     syncWrite,
+    syncWriteFull,
     syncRead,
 -- **Asynchronous
     newCompletion,
@@ -267,6 +268,23 @@ syncWrite ioctx oid offset bs =
         (Errno n) <- checkError "c_rados_write" $ F.c_rados_write
             ioctxt_ptr c_oid c_buf c_len c_offset
         return $ fromIntegral n
+
+-- |
+-- The same as syncWrite, but omitting an offset and truncating any object that
+-- already exists with that oid.
+syncWriteFull :: IOContext
+         -> B.ByteString
+         -> B.ByteString
+         -> IO Int
+syncWriteFull ioctx oid bs =
+    withForeignPtr ioctx $ \ioctxt_ptr ->
+    B.useAsCString oid   $ \c_oid ->
+    B.useAsCStringLen bs $ \(c_buf, len) -> do
+        let c_len    = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_write_full" $ F.c_rados_write_full
+            ioctxt_ptr c_oid c_buf c_len 
+        return $ fromIntegral n
+
 
 -- |
 -- Read length bytes into a ByteString, using context and oid.
