@@ -1,7 +1,7 @@
 -- |
 -- The underlying Base methods used for the monadic implementation
 -- "System.Rados.Monadic".
-module System.Rados.Base
+module System.Rados.Internal
 (
 -- *Type definitions
     ClusterHandle,
