@@ -375,9 +375,9 @@ syncRead (IOContext ioctxt_ptr) oid offset len =
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
         let c_len    = CSize  len
-        checkError "c_rados_read" $ F.c_rados_read
+        (Errno read_bytes) <- checkError "c_rados_read" $ F.c_rados_read
             ioctxt_ptr c_oid c_buf c_len c_offset
-        B.packCString c_buf
+        B.packCStringLen (c_buf, fromIntegral read_bytes)
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
 -- passed to strerror.
