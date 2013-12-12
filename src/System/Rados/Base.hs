@@ -11,10 +11,12 @@ module System.Rados.Base
     IOContext,
 -- *Connecting
     newClusterHandle,
+    cleanupClusterHandle,
     confReadFile,
     connect,
 -- *Writing
     newIOContext,
+    cleanupIOContext,
 -- **Synchronous
     syncWrite,
     syncWriteFull,
@@ -22,6 +24,7 @@ module System.Rados.Base
     syncAppend,
 -- **Asynchronous
     newCompletion,
+    cleanupCompletion,
     waitForComplete,
     waitForSafe,
     isSafe,
@@ -41,42 +44,44 @@ import Control.Applicative
 import Control.Monad (void)
 
 -- | An opaque pointer to a rados_t.
-newtype ClusterHandle = ClusterHandle (ForeignPtr F.RadosT)
+newtype ClusterHandle = ClusterHandle (Ptr F.RadosT)
 -- | An opaque pointer to a rados_ioctx_t.
-newtype IOContext     = IOContext (ForeignPtr F.RadosIOCtxT)
+newtype IOContext     = IOContext ((Ptr F.RadosIOCtxT) )
 -- | An opaque pointer to a rados_completion_t.
-newtype Completion    = Completion (ForeignPtr F.RadosCompletionT)
+newtype Completion    = Completion ((Ptr F.RadosCompletionT))
 
 -- |
 -- Attempt to create a new 'ClusterHandle, taking an optional id.
+-- You must run cleanupClusterHandle on the handle when you are done with it.
 --
 -- @
 -- h  <- newClusterHandle Nothing
 -- h' <- newClusterHandle $ Just \"admin\"
+--
+-- cleanupClusterHandle h
+-- cleanupClusterHandle h'
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_create>
---
--- The ClusterHandle returned will have rados_shutdown automatically run when
--- it is garbage collected.
---
--- Cleans up with:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_shutdown>
 newClusterHandle :: Maybe B.ByteString -> IO (ClusterHandle)
 newClusterHandle maybe_bs = do
-    -- Allocate a void pointer to cast to our Ptr RadostT
-    radost_t_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
-    checkError "c_rados_create" $ case maybe_bs of
-        Nothing ->
-            F.c_rados_create radost_t_ptr nullPtr
-        Just bs -> B.useAsCString bs $ \cstr ->
-            F.c_rados_create radost_t_ptr cstr
-    -- Call shutdown on GC, this can't be called more than once or an assert()
-    -- freaks out.
-    fp <- newForeignPtr finalizerFree =<< peek radost_t_ptr
-    addForeignPtrFinalizer F.c_rados_shutdown fp 
-    return $ ClusterHandle fp
+    alloca $ \rados_t_ptr_ptr -> do
+        checkError "c_rados_create" $ case maybe_bs of
+            Nothing ->
+                F.c_rados_create rados_t_ptr_ptr nullPtr
+            Just bs -> B.useAsCString bs $ \cstr ->
+                F.c_rados_create rados_t_ptr_ptr cstr
+        ClusterHandle <$> peek rados_t_ptr_ptr
+
+-- |
+-- Clean up a cluster handle.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_shutdown>
+cleanupClusterHandle :: ClusterHandle -> IO ()
+cleanupClusterHandle (ClusterHandle rados_t_ptr) =
+    F.c_rados_shutdown rados_t_ptr
 
 -- |
 -- Load a config specified by 'FilePath' into a given 'ClusterHandle.
@@ -89,10 +94,9 @@ newClusterHandle maybe_bs = do
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_conf_read_file>
 confReadFile :: ClusterHandle -> FilePath -> IO ()
-confReadFile (ClusterHandle handle) fp = void $
-    withForeignPtr handle $ \rados_t_ptr ->
-        checkError "c_rados_conf_read_file" $ withCString fp $ \cstr ->
-            F.c_rados_conf_read_file rados_t_ptr cstr
+confReadFile (ClusterHandle rados_t_ptr) fp = void $
+    checkError "c_rados_conf_read_file" $ withCString fp $ \cstr ->
+        F.c_rados_conf_read_file rados_t_ptr cstr
 
 -- |
 -- Attempt to connect a configured 'ClusterHandle.
@@ -106,9 +110,8 @@ confReadFile (ClusterHandle handle) fp = void $
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_connect>
 connect :: ClusterHandle -> IO ()
-connect (ClusterHandle handle) = void $
-    withForeignPtr handle $ \rados_t_ptr ->
-        checkError "c_rados_connect" $ F.c_rados_connect rados_t_ptr
+connect (ClusterHandle rados_t_ptr) = void $
+    checkError "c_rados_connect" $ F.c_rados_connect rados_t_ptr
 
 -- |
 -- Attempt to create a new 'IOContext, requires a valid 'ClusterHandle and
@@ -117,41 +120,50 @@ connect (ClusterHandle handle) = void $
 -- @
 -- h <- newClusterHandle Nothing
 -- h ctx <- newIOContext h "thing"
+-- cleanupIOContext ctx
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
---
--- And on cleanup:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_destroy>
 newIOContext :: ClusterHandle -> B.ByteString -> IO (IOContext)
-newIOContext (ClusterHandle handle) bs = B.useAsCString bs $ \cstr -> do
-    withForeignPtr handle $ \rados_t_ptr -> do
-        ioctxt_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
+newIOContext (ClusterHandle rados_t_ptr) bs = 
+    B.useAsCString bs $ \cstr ->
+    alloca $ \ioctx_ptr_ptr -> do
         checkError "c_rados_ioctx_create" $
-            F.c_rados_ioctx_create rados_t_ptr cstr ioctxt_ptr
-        fp <- newForeignPtr finalizerFree =<< peek ioctxt_ptr
-        addForeignPtrFinalizer F.c_rados_ioctx_destroy fp
-        return $ IOContext fp
+            F.c_rados_ioctx_create rados_t_ptr cstr ioctx_ptr_ptr
+        IOContext <$> peek ioctx_ptr_ptr
 
 -- |
--- Attempt to create a new completion that can be used with async IO actions.
+-- Clean up an IOContext
 --
--- This completion will be released automatically when it is garbage collected.
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_destroy>
+cleanupIOContext :: IOContext -> IO ()
+cleanupIOContext (IOContext ptr) = F.c_rados_ioctx_destroy ptr
+
+-- |
+-- Attempt to create a new 'Completion' that can be used with async IO actions.
+--
+-- You will need to run cleanupCompletion on the 'Completion' when you are done
+-- with it.
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_create_completion>
---
--- And on cleanup:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_release>
 newCompletion :: IO Completion
-newCompletion = do
-    completion_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
-    checkError "c_rados_aio_create_completion" $
-        F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr
-    fp <- newForeignPtr finalizerFree =<< peek completion_ptr
-    addForeignPtrFinalizer F.c_rados_aio_release fp
-    return $ Completion fp
+newCompletion =
+    alloca $ \completion_ptr_ptr -> do
+        checkError "c_rados_aio_create_completion" $
+            F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr_ptr
+        Completion <$> peek completion_ptr_ptr
+
+-- |
+-- Cleanup a 'Completion'
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_release>
+cleanupCompletion :: Completion -> IO ()
+cleanupCompletion (Completion rados_completion_t_ptr) = 
+    F.c_rados_aio_release rados_completion_t_ptr
 
 -- |
 -- Block until a completion is complete. I.e. the operation associated with
@@ -168,9 +180,8 @@ newCompletion = do
 -- Calls rados_aio_wait_for_complete:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_complete>
 waitForComplete :: Completion -> IO ()
-waitForComplete (Completion completion) = void $
-    withForeignPtr completion $ \rados_completion_t_ptr ->
-        F.c_rados_aio_wait_for_complete rados_completion_t_ptr
+waitForComplete (Completion rados_completion_t_ptr) = void $
+    F.c_rados_aio_wait_for_complete rados_completion_t_ptr
 
 -- |
 -- Block until a completion is safe. I.e. the operation associated with
@@ -185,9 +196,8 @@ waitForComplete (Completion completion) = void $
 -- Calls rados_aio_wait_for_safe:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_wait_for_safe>
 waitForSafe :: Completion -> IO ()
-waitForSafe (Completion completion) = void $
-    withForeignPtr completion $ \rados_completion_t_ptr ->
-        F.c_rados_aio_wait_for_complete rados_completion_t_ptr
+waitForSafe (Completion rados_completion_t_ptr) = void $
+    F.c_rados_aio_wait_for_complete rados_completion_t_ptr
 
 -- |
 -- Is the operation associated with this completion in memory on all replicas?
@@ -197,9 +207,8 @@ waitForSafe (Completion completion) = void $
 -- Cals rados_aio_is_complete:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_complete>
 isComplete :: Completion -> IO (Bool)
-isComplete (Completion completion) = 
-    withForeignPtr completion $ \rados_completion_t_ptr ->
-        (/= 0) <$> F.c_rados_aio_is_complete rados_completion_t_ptr
+isComplete (Completion rados_completion_t_ptr) = 
+    (/= 0) <$> F.c_rados_aio_is_complete rados_completion_t_ptr
 
 -- |
 -- Is the operation associated with this completion in stable storage on all
@@ -208,9 +217,8 @@ isComplete (Completion completion) =
 -- Calls rados_aio_is_safe:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_safe>
 isSafe :: Completion -> IO (Bool)
-isSafe (Completion completion) = 
-    withForeignPtr completion $ \rados_completion_t_ptr ->
-        (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
+isSafe (Completion rados_completion_t_ptr) = 
+    (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
 -- |
 -- From right to left, this function reads as:
@@ -233,9 +241,7 @@ asyncWrite :: IOContext
               -> Word64
               -> B.ByteString
               -> IO Int
-asyncWrite (IOContext ioctx) (Completion completion) oid offset bs =
-    withForeignPtr ioctx      $ \ioctxt_ptr ->
-    withForeignPtr completion $ \rados_completion_t_ptr ->
+asyncWrite (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset bs =
     B.useAsCString oid        $ \c_oid ->
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_offset = CULLong offset
@@ -254,9 +260,7 @@ asyncWriteFull :: IOContext
               -> B.ByteString
               -> B.ByteString
               -> IO Int
-asyncWriteFull (IOContext ioctx) (Completion completion) oid bs =
-    withForeignPtr ioctx      $ \ioctxt_ptr ->
-    withForeignPtr completion $ \rados_completion_t_ptr ->
+asyncWriteFull (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
@@ -275,9 +279,7 @@ asyncAppend :: IOContext
               -> B.ByteString
               -> B.ByteString
               -> IO Int
-asyncAppend (IOContext ioctx) (Completion completion) oid bs =
-    withForeignPtr ioctx      $ \ioctxt_ptr ->
-    withForeignPtr completion $ \rados_completion_t_ptr ->
+asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
@@ -308,8 +310,7 @@ syncWrite :: IOContext
          -> Word64
          -> B.ByteString
          -> IO Int
-syncWrite (IOContext ioctx) oid offset bs =
-    withForeignPtr ioctx $ \ioctxt_ptr ->
+syncWrite (IOContext ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_offset = CULLong offset
@@ -327,8 +328,7 @@ syncWriteFull :: IOContext
          -> B.ByteString
          -> B.ByteString
          -> IO Int
-syncWriteFull (IOContext ioctx) oid bs =
-    withForeignPtr ioctx $ \ioctxt_ptr ->
+syncWriteFull (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
@@ -344,8 +344,7 @@ syncAppend :: IOContext
          -> B.ByteString
          -> B.ByteString
          -> IO Int
-syncAppend (IOContext ioctx) oid bs =
-    withForeignPtr ioctx $ \ioctxt_ptr ->
+syncAppend (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
@@ -371,8 +370,7 @@ syncRead :: IOContext
     -> Word64
     -> Word64
     -> IO B.ByteString
-syncRead (IOContext ioctx) oid offset len =
-    withForeignPtr ioctx           $ \ioctxt_ptr ->
+syncRead (IOContext ioctxt_ptr) oid offset len =
     allocaBytes (fromIntegral len) $ \c_buf ->
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
@@ -390,5 +388,6 @@ checkError desc action = do
         then do
             let negated = Errno (-n)
             strerror <- peekCString =<< F.c_strerror negated
+            print "Got an error"
             error $ desc ++ ": " ++ strerror
         else return e
