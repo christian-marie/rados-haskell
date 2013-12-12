@@ -46,9 +46,9 @@ import Control.Monad (void)
 -- | An opaque pointer to a rados_t.
 newtype ClusterHandle = ClusterHandle (Ptr F.RadosT)
 -- | An opaque pointer to a rados_ioctx_t.
-newtype IOContext     = IOContext ((Ptr F.RadosIOCtxT) )
+newtype IOContext     = IOContext (Ptr F.RadosIOCtxT)
 -- | An opaque pointer to a rados_completion_t.
-newtype Completion    = Completion ((Ptr F.RadosCompletionT))
+newtype Completion    = Completion (Ptr F.RadosCompletionT)
 
 -- |
 -- Attempt to create a new 'ClusterHandle, taking an optional id.
@@ -65,7 +65,7 @@ newtype Completion    = Completion ((Ptr F.RadosCompletionT))
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_create>
 newClusterHandle :: Maybe B.ByteString -> IO (ClusterHandle)
-newClusterHandle maybe_bs = do
+newClusterHandle maybe_bs =
     alloca $ \rados_t_ptr_ptr -> do
         checkError "c_rados_create" $ case maybe_bs of
             Nothing ->
@@ -94,8 +94,8 @@ cleanupClusterHandle (ClusterHandle rados_t_ptr) =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_conf_read_file>
 confReadFile :: ClusterHandle -> FilePath -> IO ()
-confReadFile (ClusterHandle rados_t_ptr) fp = void $
-    checkError "c_rados_conf_read_file" $ withCString fp $ \cstr ->
+confReadFile (ClusterHandle rados_t_ptr) fp =
+    checkError_ "c_rados_conf_read_file" $ withCString fp $ \cstr ->
         F.c_rados_conf_read_file rados_t_ptr cstr
 
 -- |
@@ -110,8 +110,8 @@ confReadFile (ClusterHandle rados_t_ptr) fp = void $
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_connect>
 connect :: ClusterHandle -> IO ()
-connect (ClusterHandle rados_t_ptr) = void $
-    checkError "c_rados_connect" $ F.c_rados_connect rados_t_ptr
+connect (ClusterHandle rados_t_ptr) =
+    checkError_ "c_rados_connect" $ F.c_rados_connect rados_t_ptr
 
 -- |
 -- Attempt to create a new 'IOContext, requires a valid 'ClusterHandle and
@@ -391,3 +391,6 @@ checkError desc action = do
             print "Got an error"
             error $ desc ++ ": " ++ strerror
         else return e
+
+checkError_ :: String -> IO Errno -> IO ()
+checkError_ desc action = checkError_ desc action
