@@ -19,6 +19,7 @@ module System.Rados.Base
     syncWrite,
     syncWriteFull,
     syncRead,
+    syncAppend,
 -- **Asynchronous
     newCompletion,
     waitForComplete,
@@ -49,7 +50,7 @@ type Completion    = ForeignPtr F.RadosCompletionT
 --
 -- @
 -- h  <- newClusterHandle Nothing
--- h' <- newClusterHandle \"admin\"
+-- h' <- newClusterHandle $ Just \"admin\"
 -- @
 --
 -- Calls:
@@ -80,7 +81,7 @@ newClusterHandle maybe_bs = do
 --
 -- @
 -- h <- newClusterHandle Nothing
--- confReadFile h \"/etc/config\"
+-- confReadFile h \"\/etc\/config\"
 -- @
 --
 -- Calls:
@@ -287,7 +288,7 @@ asyncAppend ioctx completion oid bs =
 -- IOContext
 --
 --
--- Usage is the same as asyncWrite, without a context.
+-- Usage is the same as 'asyncWrite', without a 'Completion'.
 --
 -- @
 -- ...
@@ -314,7 +315,7 @@ syncWrite ioctx oid offset bs =
         return $ fromIntegral n
 
 -- |
--- The same as syncWrite, but omitting an offset and truncating any object that
+-- The same as 'syncWrite', but omitting an offset and truncating any object that
 -- already exists with that oid.
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_write_full>
@@ -328,6 +329,23 @@ syncWriteFull ioctx oid bs =
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
         (Errno n) <- checkError "c_rados_write_full" $ F.c_rados_write_full
+            ioctxt_ptr c_oid c_buf c_len 
+        return $ fromIntegral n
+
+-- |
+-- Same calling convention as 'syncWriteFull', appends to an object.
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_append>
+syncAppend :: IOContext
+         -> B.ByteString
+         -> B.ByteString
+         -> IO Int
+syncAppend ioctx oid bs =
+    withForeignPtr ioctx $ \ioctxt_ptr ->
+    B.useAsCString oid   $ \c_oid ->
+    B.useAsCStringLen bs $ \(c_buf, len) -> do
+        let c_len    = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_append" $ F.c_rados_append
             ioctxt_ptr c_oid c_buf c_len 
         return $ fromIntegral n
 

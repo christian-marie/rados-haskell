@@ -112,7 +112,14 @@ foreign import ccall unsafe "librados.h rados_write_full"
 	                  -> CSize
 	                  -> IO Errno
 
-foreign import ccall unsafe "librados.h rados_aio_read"
+foreign import ccall unsafe "librados.h rados_append"
+    c_rados_append :: Ptr RadosIOCtxT 
+    	           -> CString
+	           -> CString
+	           -> CSize
+	           -> IO Errno
+
+foreign import ccall unsafe "librados.h rados_read"
     c_rados_read :: Ptr RadosIOCtxT 
     	            -> CString
 	            -> CString
