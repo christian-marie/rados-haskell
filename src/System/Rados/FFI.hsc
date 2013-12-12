@@ -70,9 +70,6 @@ foreign import ccall unsafe "librados.h rados_aio_is_complete"
 foreign import ccall unsafe "librados.h rados_aio_is_safe"
     c_rados_aio_is_safe :: Ptr RadosCompletionT -> IO CInt
 
--- int rados_aio_write(rados_ioctx_t io, const char *oid,
--- 		    rados_completion_t completion,
--- 		    const char *buf, size_t len, uint64_t off);
 foreign import ccall unsafe "librados.h rados_aio_write"
     c_rados_aio_write :: Ptr RadosIOCtxT 
     			 -> CString
@@ -82,9 +79,24 @@ foreign import ccall unsafe "librados.h rados_aio_write"
 			 -> CULLong
 			 -> IO Errno
 
--- The same as rados_aio_write, without a rados_completion_t
--- int rados_write(rados_ioctx_t io, const char *oid,
---		const char *buf, size_t len, uint64_t off);
+foreign import ccall unsafe "librados.h rados_aio_write_full"
+    c_rados_aio_write_full :: Ptr RadosIOCtxT 
+    	                   -> CString
+		           -> Ptr RadosCompletionT
+		           -> CString
+		           -> CSize
+		           -> IO Errno
+
+
+foreign import ccall unsafe "librados.h rados_aio_append"
+    c_rados_aio_append :: Ptr RadosIOCtxT 
+    	               -> CString
+		       -> Ptr RadosCompletionT
+		       -> CString
+		       -> CSize
+		       -> IO Errno
+
+
 foreign import ccall unsafe "librados.h rados_write"
     c_rados_write :: Ptr RadosIOCtxT 
     	             -> CString
@@ -93,20 +105,13 @@ foreign import ccall unsafe "librados.h rados_write"
 	             -> CULLong
 	             -> IO Errno
 
--- int rados_write_full(rados_ioctx_t io, const char *oid,
--- const char *buf, size_t len);
 foreign import ccall unsafe "librados.h rados_write_full"
     c_rados_write_full :: Ptr RadosIOCtxT 
-    	                   -> CString
-	                   -> CString
-	                   -> CSize
-	                   -> IO Errno
+    	                  -> CString
+	                  -> CString
+	                  -> CSize
+	                  -> IO Errno
 
--- I do not currently see how to do the async version of this, being that it
--- continues writing to buf after it returns.
---
--- int rados_read(rados_ioctx_t io, const char *oid, char *buf,
---	size_t len, uint64_t off);
 foreign import ccall unsafe "librados.h rados_aio_read"
     c_rados_read :: Ptr RadosIOCtxT 
     	            -> CString

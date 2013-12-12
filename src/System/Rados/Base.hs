@@ -26,6 +26,8 @@ module System.Rados.Base
     isSafe,
     isComplete,
     asyncWrite,
+    asyncWriteFull,
+    asyncAppend,
 ) where
 
 import qualified System.Rados.FFI as F
@@ -237,6 +239,48 @@ asyncWrite ioctx completion oid offset bs =
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
         return $ fromIntegral n
 -- |
+-- Same calling convention as asyncWrite, simply omitting an offset.
+-- This will truncate any existing object.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write_full>
+asyncWriteFull :: IOContext
+              -> Completion
+              -> B.ByteString
+              -> B.ByteString
+              -> IO Int
+asyncWriteFull ioctx completion oid bs =
+    withForeignPtr ioctx      $ \ioctxt_ptr ->
+    withForeignPtr completion $ \rados_completion_t_ptr ->
+    B.useAsCString oid        $ \c_oid ->
+    B.useAsCStringLen bs      $ \(c_buf, len) -> do
+        let c_len    = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_aio_write_full" $ 
+            F.c_rados_aio_write_full
+                ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
+        return $ fromIntegral n
+
+-- |
+-- Same calling convention as asyncWriteFull, simply appends to an object.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
+asyncAppend :: IOContext
+              -> Completion
+              -> B.ByteString
+              -> B.ByteString
+              -> IO Int
+asyncAppend ioctx completion oid bs =
+    withForeignPtr ioctx      $ \ioctxt_ptr ->
+    withForeignPtr completion $ \rados_completion_t_ptr ->
+    B.useAsCString oid        $ \c_oid ->
+    B.useAsCStringLen bs      $ \(c_buf, len) -> do
+        let c_len    = CSize $ fromIntegral len
+        (Errno n) <- checkError "c_rados_aio_append" $ F.c_rados_aio_append
+            ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
+        return $ fromIntegral n
+
+-- |
 --
 -- From right to left, this function reads as:
 -- Write ByteString buffer to Word64 offset at ByteString oid within this
@@ -272,6 +316,8 @@ syncWrite ioctx oid offset bs =
 -- |
 -- The same as syncWrite, but omitting an offset and truncating any object that
 -- already exists with that oid.
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_write_full>
 syncWriteFull :: IOContext
          -> B.ByteString
          -> B.ByteString
@@ -284,7 +330,6 @@ syncWriteFull ioctx oid bs =
         (Errno n) <- checkError "c_rados_write_full" $ F.c_rados_write_full
             ioctxt_ptr c_oid c_buf c_len 
         return $ fromIntegral n
-
 
 -- |
 -- Read length bytes into a ByteString, using context and oid.
