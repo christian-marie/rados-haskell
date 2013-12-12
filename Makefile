@@ -58,7 +58,8 @@ endif
 # Source files, main and testing
 #
 
-CORE_SOURCES=$(shell find src -name '*.hs' -type f)
+FFI_SOURCES=$(shell find src -name '*.hsc' -type f | sed -e 's/hsc$$/hs/')
+CORE_SOURCES=$(shell find src -name '*.hs' -type f) $(FFI_SOURCES)
 TEST_SOURCES=$(shell find tests -name '*.hs' -type f)
 
 
@@ -74,9 +75,12 @@ $(BUILDDIR)/%.bin: config.h src/%.hs $(CORE_SOURCES) tags
 		-outputdir $(BUILDDIR)/$* \
 		-i"$(BUILDDIR):src" \
 		-I"." \
+		-lrados \
 		-o $@ \
 		src/$*.hs
 
+%.hs: %.hsc
+	hsc2hs -o $@ $<
 
 tags: $(CORE_SOURCES) $(TEST_SOURCES)
 	@/bin/echo -e "CTAGS\ttags"
@@ -96,6 +100,7 @@ $(BUILDDIR)/%.bin: config.h tests/%.hs $(CORE_SOURCES) $(TEST_SOURCES)
 		-outputdir $(BUILDDIR)/tests \
 		-i"$(BUILDDIR):src:tests" \
 		-I"." \
+		-lrados \
 		-o $@ \
 		tests/$*.hs
 
