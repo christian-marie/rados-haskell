@@ -1,8 +1,6 @@
 -- |
 -- The underlying Base methods used for the monadic implementation
 -- "System.Rados.Monadic".
---
--- It is not recommended to use this module directly.
 module System.Rados.Base
 (
 -- *Type definitions
@@ -35,10 +33,11 @@ module System.Rados.Base
 ) where
 
 import qualified System.Rados.FFI as F
+import System.Rados.Error(checkError, checkError_)
+
 import Data.ByteString as B
 import Foreign hiding (void)
 import Foreign.C.String
-import Foreign.C.Error
 import Foreign.C.Types
 import Control.Applicative
 import Control.Monad (void)
@@ -246,9 +245,8 @@ asyncWrite (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_offset = CULLong offset
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_aio_write" $ F.c_rados_aio_write
+        checkError "c_rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
-        return $ fromIntegral n
 -- |
 -- Same calling convention as asyncWrite, simply omitting an offset.
 -- This will truncate any existing object.
@@ -264,10 +262,9 @@ asyncWriteFull (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs
     B.useAsCString oid        $ \c_oid ->
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_aio_write_full" $ 
+        checkError "c_rados_aio_write_full" $ 
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
-        return $ fromIntegral n
 
 -- |
 -- Same calling convention as asyncWriteFull, simply appends to an object.
@@ -283,9 +280,8 @@ asyncAppend (IOContext ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_aio_append" $ F.c_rados_aio_append
+        checkError "c_rados_aio_append" $ F.c_rados_aio_append
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_len
-        return $ fromIntegral n
 
 -- |
 --
@@ -315,9 +311,8 @@ syncWrite (IOContext ioctxt_ptr) oid offset bs =
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_offset = CULLong offset
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_write" $ F.c_rados_write
+        checkError "c_rados_write" $ F.c_rados_write
             ioctxt_ptr c_oid c_buf c_len c_offset
-        return $ fromIntegral n
 
 -- |
 -- The same as 'syncWrite', but omitting an offset and truncating any object that
@@ -332,9 +327,8 @@ syncWriteFull (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_write_full" $ F.c_rados_write_full
+        checkError "c_rados_write_full" $ F.c_rados_write_full
             ioctxt_ptr c_oid c_buf c_len 
-        return $ fromIntegral n
 
 -- |
 -- Same calling convention as 'syncWriteFull', appends to an object.
@@ -348,9 +342,8 @@ syncAppend (IOContext ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_len    = CSize $ fromIntegral len
-        (Errno n) <- checkError "c_rados_append" $ F.c_rados_append
+        checkError "c_rados_append" $ F.c_rados_append
             ioctxt_ptr c_oid c_buf c_len 
-        return $ fromIntegral n
 
 -- |
 -- Read length bytes into a ByteString, using context and oid.
@@ -375,22 +368,6 @@ syncRead (IOContext ioctxt_ptr) oid offset len =
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
         let c_len    = CSize  len
-        (Errno read_bytes) <- checkError "c_rados_read" $ F.c_rados_read
+        read_bytes <- checkError "c_rados_read" $ F.c_rados_read
             ioctxt_ptr c_oid c_buf c_len c_offset
-        B.packCStringLen (c_buf, fromIntegral read_bytes)
-
--- Handle a ceph Errno, which is an errno that must be negated before being
--- passed to strerror.
-checkError :: String -> IO Errno -> IO Errno
-checkError desc action = do
-    e@(Errno n) <- action
-    if n < 0
-        then do
-            let negated = Errno (-n)
-            strerror <- peekCString =<< F.c_strerror negated
-            print "Got an error"
-            error $ desc ++ ": " ++ strerror
-        else return e
-
-checkError_ :: String -> IO Errno -> IO ()
-checkError_ desc action = checkError_ desc action
+        B.packCStringLen (c_buf, read_bytes)
