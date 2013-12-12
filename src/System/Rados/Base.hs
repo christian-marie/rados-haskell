@@ -361,7 +361,7 @@ syncAppend (IOContext ioctxt_ptr) oid bs =
 --
 -- @
 -- ...
--- bs <- syncRead ctx "oid" 100 42
+-- bs <- syncRead ctx \"oid\" 100 42
 -- @
 --
 -- The above will place 100 bytes into bs, read from an offset of 42
