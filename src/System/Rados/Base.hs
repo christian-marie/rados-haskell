@@ -8,6 +8,7 @@ module System.Rados.Base
 -- *Type definitions
     ClusterHandle,
     Completion,
+    IOContext,
 -- *Connecting
     newClusterHandle,
     confReadFile,
@@ -60,14 +61,16 @@ newClusterHandle :: Maybe B.ByteString -> IO (ClusterHandle)
 newClusterHandle maybe_bs = do
     -- Allocate a void pointer to cast to our Ptr RadostT
     radost_t_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
-    checkError "c_rados_create" $ case maybe_bs of 
+    checkError "c_rados_create" $ case maybe_bs of
         Nothing ->
             F.c_rados_create radost_t_ptr nullPtr
-        Just bs -> B.useAsCString bs $ \cstr -> 
+        Just bs -> B.useAsCString bs $ \cstr ->
             F.c_rados_create radost_t_ptr cstr
     -- Call shutdown on GC, this can't be called more than once or an assert()
     -- freaks out.
-    newForeignPtr F.c_rados_shutdown =<< peek radost_t_ptr
+    fp <- newForeignPtr finalizerFree =<< peek radost_t_ptr
+    addForeignPtrFinalizer F.c_rados_shutdown fp 
+    return fp
 
 -- |
 -- Load a config specified by 'FilePath' into a given 'ClusterHandle'.
@@ -94,10 +97,10 @@ confReadFile handle fp = void $
 -- connect h
 -- @
 --
--- Calls: 
+-- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_connect>
 connect :: ClusterHandle -> IO ()
-connect handle = void $ 
+connect handle = void $
     withForeignPtr handle $ \rados_t_ptr ->
         checkError "c_rados_connect" $ F.c_rados_connect rados_t_ptr
 
@@ -119,9 +122,11 @@ newIOContext :: ClusterHandle -> B.ByteString -> IO (IOContext)
 newIOContext handle bs = B.useAsCString bs $ \cstr -> do
     withForeignPtr handle $ \rados_t_ptr -> do
         ioctxt_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
-        checkError "c_rados_ioctx_create" $ 
+        checkError "c_rados_ioctx_create" $
             F.c_rados_ioctx_create rados_t_ptr cstr ioctxt_ptr
-        newForeignPtr F.c_rados_ioctx_destroy =<< peek ioctxt_ptr
+        fp <- newForeignPtr finalizerFree =<< peek ioctxt_ptr
+        addForeignPtrFinalizer F.c_rados_ioctx_destroy fp
+        return fp
 
 -- |
 -- Attempt to create a new completion that can be used with async IO actions.
@@ -138,7 +143,9 @@ newCompletion = do
     completion_ptr <- castPtr <$> (malloc :: IO (Ptr WordPtr))
     checkError "c_rados_aio_create_completion" $
         F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr
-    newForeignPtr F.c_rados_aio_release =<< peek completion_ptr
+    fp <- newForeignPtr finalizerFree =<< peek completion_ptr
+    addForeignPtrFinalizer F.c_rados_aio_release fp
+    return fp
 
 -- |
 -- Block until a completion is complete. I.e. the operation associated with
@@ -158,7 +165,7 @@ waitForComplete :: Completion -> IO ()
 waitForComplete completion = void $
     withForeignPtr completion $ \rados_completion_t_ptr ->
         F.c_rados_aio_wait_for_complete rados_completion_t_ptr
-        
+
 -- |
 -- Block until a completion is safe. I.e. the operation associated with
 -- the completion is on stable storage on all replicas.
@@ -209,7 +216,7 @@ isSafe completion = withForeignPtr completion $ \rados_completion_t_ptr ->
 -- n <- asyncWrite ctx c "oid" 42 \"written at offset fourty-two\"
 -- putStrLn $ "I wrote " ++ show n ++ " bytes"
 -- @
--- 
+--
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write>
 asyncWrite :: IOContext
@@ -219,10 +226,10 @@ asyncWrite :: IOContext
               -> B.ByteString
               -> IO Int
 asyncWrite ioctx completion oid offset bs =
-    withForeignPtr ioctx $ \ioctxt_ptr ->
+    withForeignPtr ioctx      $ \ioctxt_ptr ->
     withForeignPtr completion $ \rados_completion_t_ptr ->
-    B.useAsCString oid $ \c_oid ->
-    B.useAsCStringLen bs $ \(c_buf, len) -> do
+    B.useAsCString oid        $ \c_oid ->
+    B.useAsCStringLen bs      $ \(c_buf, len) -> do
         let c_offset = CULLong offset
         let c_len    = CSize $ fromIntegral len
         (Errno n) <- checkError "c_rados_aio_write" $ F.c_rados_aio_write
@@ -243,7 +250,7 @@ asyncWrite ioctx completion oid offset bs =
 -- @
 --
 -- Returns the number of bytes written.
--- 
+--
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_write>
 syncWrite :: IOContext
@@ -253,7 +260,7 @@ syncWrite :: IOContext
          -> IO Int
 syncWrite ioctx oid offset bs =
     withForeignPtr ioctx $ \ioctxt_ptr ->
-    B.useAsCString oid $ \c_oid ->
+    B.useAsCString oid   $ \c_oid ->
     B.useAsCStringLen bs $ \(c_buf, len) -> do
         let c_offset = CULLong offset
         let c_len    = CSize $ fromIntegral len
@@ -280,9 +287,9 @@ syncRead :: IOContext
     -> Word64
     -> IO B.ByteString
 syncRead ioctx oid offset len =
-    withForeignPtr ioctx $ \ioctxt_ptr ->
+    withForeignPtr ioctx           $ \ioctxt_ptr ->
     allocaBytes (fromIntegral len) $ \c_buf ->
-    B.useAsCString oid $ \c_oid -> do
+    B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
         let c_len    = CSize  len
         checkError "c_rados_read" $ F.c_rados_read
