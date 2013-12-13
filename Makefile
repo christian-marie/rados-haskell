@@ -58,7 +58,7 @@ endif
 # Source files, main and testing
 #
 
-FFI_SOURCES=$(shell find src -name '*.hsc' -type f | sed -e 's/hsc$$/hs/')
+FFI_SOURCES=$(shell find src -name '*.hsc' -type f | perl -p -e 's/hsc$$/hs/; s{src}{$(BUILDDIR)/generated};')
 CORE_SOURCES=$(shell find src -name '*.hs' -type f) $(FFI_SOURCES)
 TEST_SOURCES=$(shell find tests -name '*.hs' -type f)
 
@@ -73,7 +73,7 @@ $(BUILDDIR)/%.bin: config.h src/%.hs $(CORE_SOURCES) tags
 	@/bin/echo -e "GHC\t$@"
 	$(GHC) --make \
 		-outputdir $(BUILDDIR)/$* \
-		-i"$(BUILDDIR):src" \
+		-i"$(BUILDDIR)/$*:src" \
 		-I"." \
 		-lrados \
 		-o $@ \
@@ -92,13 +92,19 @@ tags: $(CORE_SOURCES) $(TEST_SOURCES)
 
 tests: config check
 
+$(BUILDDIR)/generated/%.hs: src/%.hsc
+	@if [ ! -d $(BUILDDIR)/generated ] ; then /bin/echo -e "MKDIR\t$(BUILDDIR)/generated" ; mkdir -p $(BUILDDIR)/generated ; fi
+	mkdir -p `dirname $@`
+	hsc2hs -o $@ $<
+
+
 $(BUILDDIR)/%.bin: config.h tests/%.hs $(CORE_SOURCES) $(TEST_SOURCES)
 	@if [ ! -d $(BUILDDIR) ] ; then /bin/echo -e "MKDIR\t$(BUILDDIR)" ; mkdir -p $(BUILDDIR) ; fi
 	@/bin/echo -e "GHC\t$@"
 	$(GHC) --make \
 		-prof -fprof-auto \
-		-outputdir $(BUILDDIR)/tests \
-		-i"$(BUILDDIR):src:tests" \
+		-outputdir $(BUILDDIR)/testsuite \
+		-i"$(BUILDDIR)/generated:src:tests" \
 		-I"." \
 		-lrados \
 		-o $@ \
