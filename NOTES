@@ -1,0 +1,49 @@
+Why is the return value of rados_write and similar ignored?
+
+12:34 < pingu> can anyone tell me why rados_write would return a byte count 
+               less than that of the buffer provided to it?
+12:35 < pingu> as rados_write_full doesn't seem to do any such thing.
+12:38 < joshd> it would never return less than the full length, only errors 
+               like EPERM, ENOSPC, etc.
+12:38 < joshd> rados_read may return a smaller number of bytes read if it 
+               would be past the end of the object
+12:39 < pingu> joshd: okay, thanks. So that's rados_write that will never 
+               return less than the full length?
+12:39 < joshd> yeah
+12:39 < pingu> That seems a bit misguiding to return a size that you never 
+               need to look at does it not?
+12:40 < pingu> Surely if you don't need to care about the return value, it 
+               should just return zero on success?
+12:40 < pingu> I am looking at: 
+               http://ceph.com/docs/master/rados/api/librados/#rados_write
+12:40 < joshd> yes, unfortunately we're stuck with it for backwards 
+               compatibliity
+12:41 < pingu> Okay. Thanks. Maybe the documentation could note that?
+12:41 < joshd> it certainly could (it's generated from the header)
+12:42 -!- zhyan_ [~zhyan@134.134.137.73] has joined #ceph-devel
+12:45 -!- yanzheng [~zhyan@jfdmzpr04-ext.jf.intel.com] has quit [Remote host 
+          closed the connection]
+12:54 <@dmick> that's the "standard" for *write interfaces, really: return the 
+               length written.
+12:54 <@dmick> it just so happens this one won't return less, but all the rest 
+               have the same convention
+12:55 < pingu> I certainly wouldn't expect any library to follow a "standard" 
+               interface though.
+12:56 < pingu> That would be rather overly hopeful.
+12:56 < pingu> And as such, I think it'd be a good idea to document that it's 
+               returning a value you can feel free to ignore.
+12:56 < pingu> I wouldn't be surprised if someone out there has implemented a 
+               retry-if-less-is-written loop.
+12:58 -!- rturk-away is now known as rturk
+12:59 -!- rturk is now known as rturk-away
+13:01 <@dmick> right, but that loop is fine
+13:01 <@dmick> and the point was that it's a convention amongst many libraries 
+               (like, libc)
+13:01 -!- xarses [~andreww@64-79-127-122.static.wiline.com] has quit [Ping 
+          timeout: 480 seconds]
+13:02 < pingu> it's fine, sure, but it's wasting peoples time implementing 
+               code that will never be used.
+13:02 <@dmick> sigh.  yes, it is.  yes, it should be documented.  drive on.
+
+https://github.com/ceph/ceph/pull/937
+

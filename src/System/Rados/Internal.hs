@@ -66,7 +66,7 @@ newtype Completion    = Completion (Ptr F.RadosCompletionT)
 newConnection :: Maybe B.ByteString -> IO (Connection)
 newConnection maybe_bs =
     alloca $ \rados_t_ptr_ptr -> do
-        checkError "c_rados_create" $ case maybe_bs of
+        checkError "rados_create" $ case maybe_bs of
             Nothing ->
                 F.c_rados_create rados_t_ptr_ptr nullPtr
             Just bs -> B.useAsCString bs $ \cstr ->
@@ -94,7 +94,7 @@ cleanupConnection (Connection rados_t_ptr) =
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_conf_read_file>
 confReadFile :: Connection -> FilePath -> IO ()
 confReadFile (Connection rados_t_ptr) fp =
-    checkError_ "c_rados_conf_read_file" $ withCString fp $ \cstr ->
+    checkError_ "rados_conf_read_file" $ withCString fp $ \cstr ->
         F.c_rados_conf_read_file rados_t_ptr cstr
 
 -- |
@@ -110,7 +110,7 @@ confReadFile (Connection rados_t_ptr) fp =
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_connect>
 connect :: Connection -> IO ()
 connect (Connection rados_t_ptr) =
-    checkError_ "c_rados_connect" $ F.c_rados_connect rados_t_ptr
+    checkError_ "rados_connect" $ F.c_rados_connect rados_t_ptr
 
 -- |
 -- Attempt to create a new 'Pool, requires a valid 'Connection and
@@ -128,7 +128,7 @@ newPool :: Connection -> B.ByteString -> IO (Pool)
 newPool (Connection rados_t_ptr) bs = 
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
-        checkError "c_rados_ioctx_create" $
+        checkError "rados_ioctx_create" $
             F.c_rados_ioctx_create rados_t_ptr cstr ioctx_ptr_ptr
         Pool <$> peek ioctx_ptr_ptr
 
@@ -151,7 +151,7 @@ cleanupPool (Pool ptr) = F.c_rados_ioctx_destroy ptr
 newCompletion :: IO Completion
 newCompletion =
     alloca $ \completion_ptr_ptr -> do
-        checkError "c_rados_aio_create_completion" $
+        checkError "rados_aio_create_completion" $
             F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr_ptr
         Completion <$> peek completion_ptr_ptr
 
@@ -228,23 +228,24 @@ isSafe (Completion rados_completion_t_ptr) =
 -- @
 -- ...
 -- ctx <- newPool h \"thing\"
--- n <- asyncWrite ctx c "oid" 42 \"written at offset fourty-two\"
+-- asyncWrite ctx c "oid" 42 \"written at offset fourty-two\"
 -- putStrLn $ "I wrote " ++ show n ++ " bytes"
 -- @
 --
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write>
 asyncWrite :: Pool
-              -> Completion
-              -> B.ByteString
-              -> Word64
-              -> B.ByteString
-              -> IO Int
-asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid offset bs =
-    B.useAsCString oid        $ \c_oid ->
+           -> Completion
+           -> B.ByteString
+           -> Word64
+           -> B.ByteString
+           -> IO ()
+asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
+           oid offset bs =
+    B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
-        checkError "c_rados_aio_write" $ F.c_rados_aio_write
+        checkError_ "rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size c_offset
 -- |
 -- Same calling convention as asyncWrite, simply omitting an offset.
@@ -256,11 +257,11 @@ asyncWriteFull :: Pool
               -> Completion
               -> B.ByteString
               -> B.ByteString
-              -> IO Int
+              -> IO ()
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError "c_rados_aio_write_full" $ 
+        checkError_ "rados_aio_write_full" $ 
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
@@ -273,53 +274,44 @@ asyncAppend :: Pool
               -> Completion
               -> B.ByteString
               -> B.ByteString
-              -> IO Int
+              -> IO ()
 asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError "c_rados_aio_append" $ F.c_rados_aio_append
+        checkError_ "rados_aio_append" $ F.c_rados_aio_append
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |
 -- Write a 'ByteString' to 'Pool', object id and offset.
 --
--- Returns the number of bytes written. 
---
 -- @
 -- ...
--- n <- syncWrite Pool \"object_id\" 42 \"written at offset fourty-two\"
+-- syncWrite Pool \"object_id\" 42 \"written at offset fourty-two\"
 -- @
---
---
--- TODO: Should the user check this? Why
--- would it not be the amount of bytes given? Probably something to do with
--- running out of space.
 syncWrite :: Pool
           -> B.ByteString
           -> Word64
           -> B.ByteString
-          -> IO Int
+          -> IO ()
 syncWrite (Pool ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
-        checkError "c_rados_write" $ F.c_rados_write
+        checkError_ "rados_write" $ F.c_rados_write
             ioctxt_ptr c_oid c_buf c_size c_offset
 
 -- |
 -- Write a 'ByteString' to 'Pool' and object id.
 --
 -- This will replace any existing object at the same 'Pool' and object id.
---
--- Returns the number of bytes written.
 syncWriteFull :: Pool
          -> B.ByteString
          -> B.ByteString
-         -> IO Int
+         -> IO ()
 syncWriteFull (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, len) -> do
-        checkError "c_rados_write_full" $ F.c_rados_write_full
+        checkError_ "rados_write_full" $ F.c_rados_write_full
             ioctxt_ptr c_oid c_buf len
 
 -- |
@@ -329,11 +321,11 @@ syncWriteFull (Pool ioctxt_ptr) oid bs =
 syncAppend :: Pool
          -> B.ByteString
          -> B.ByteString
-         -> IO Int
+         -> IO ()
 syncAppend (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError "c_rados_append" $ F.c_rados_append
+        checkError_ "rados_append" $ F.c_rados_append
             ioctxt_ptr c_oid c_buf c_size
 
 -- |
@@ -344,6 +336,9 @@ syncAppend (Pool ioctxt_ptr) oid bs =
 -- TODO: Document a multithreaded example to compensate for no async. This may
 -- or may not require to be called from the same OS thread. Test and document
 -- that.
+--
+-- Or, even, provide an abstract Future type that can simply wrap an mvar, then
+-- do the multithreading for the user.
 --
 -- @
 --         ...
@@ -361,7 +356,7 @@ syncRead (Pool ioctxt_ptr) oid offset len =
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
         let c_len    = CSize  len
-        read_bytes <- checkError "c_rados_read" $ F.c_rados_read
+        read_bytes <- checkError "rados_read" $ F.c_rados_read
             ioctxt_ptr c_oid c_buf c_len c_offset
         B.packCStringLen (c_buf, read_bytes)
 
