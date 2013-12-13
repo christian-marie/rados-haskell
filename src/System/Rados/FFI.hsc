@@ -128,3 +128,8 @@ foreign import ccall unsafe "librados.h rados_read"
 	            -> CSize
 	            -> CULLong
 	            -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_remove"
+    c_rados_remove :: Ptr RadosIOCtxT
+		    -> CString
+	            -> IO CInt

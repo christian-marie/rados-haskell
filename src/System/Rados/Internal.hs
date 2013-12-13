@@ -20,6 +20,7 @@ module System.Rados.Internal
     syncWriteFull,
     syncRead,
     syncAppend,
+    syncRemove,
 -- **Asynchronous
     newCompletion,
     cleanupCompletion,
@@ -372,3 +373,15 @@ syncRead (Pool ioctxt_ptr) oid offset len =
 useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a 
 useAsCStringCSize bs f =
     B.useAsCStringLen bs $ \(cstr, len) -> f (cstr, (CSize . fromIntegral) len)
+
+-- |
+-- Delete an object from 'Pool' by ID.
+--
+syncRemove
+    :: Pool
+    -> B.ByteString
+    -> IO ()
+syncRemove (Pool ioctxt_ptr) oid =
+    B.useAsCString oid   $ \c_oid ->
+        checkError_ "rados_remove" $ F.c_rados_remove
+            ioctxt_ptr c_oid

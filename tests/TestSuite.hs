@@ -41,6 +41,7 @@ suite = do
     describe "Simple write/read round trips" $ do
         testPutObject
         testGetObject
+        testDeleteObject
 
 
 testConnectionHost = do
@@ -62,3 +63,10 @@ testGetObject =
             withPool connection "test1" $ \pool -> do
                 x' <- syncRead pool "test-rados-haskell" 0 1024
                 assertEqual "Incorrect content read" "schrodinger's cat?\n" x')
+
+testDeleteObject =
+    it "deletes the object afterward" $ do
+        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") (\connection ->
+            withPool connection "test1" $ \pool -> do
+                syncRemove pool "test-rados-haskell"
+                assertBool "Failed" True)

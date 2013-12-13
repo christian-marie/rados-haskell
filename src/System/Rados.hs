@@ -38,6 +38,7 @@ module System.Rados
     I.syncWrite,
     I.syncWriteFull,
     I.syncAppend,
+    I.syncRemove,
     -- *Asynchronous IO
     -- ** Async monad
     runAsync,
