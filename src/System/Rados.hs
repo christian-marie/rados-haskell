@@ -4,6 +4,21 @@ module System.Rados
     -- *Types
     I.Connection,
     I.Pool,
+    -- *Exceptions
+    -- |
+    -- This library should only ever throw a 'RadosError'.
+    --
+    -- You can handle this with something like:
+    --
+    -- @
+    -- main = tryHai \`catch\` (\\e -> putStrLn $ strerror e )
+    --   where tryHai = withConnection Nothing (readConfig \"/dev/null\")
+    --                                         (\\_ -> putStrLn \"hai\")
+    -- @
+    E.RadosError(RadosError),
+    E.cFunction,
+    E.errno,
+    E.strerror,
     -- *General usage
     -- |
     -- Write an object and then read it back:
@@ -40,6 +55,7 @@ module System.Rados
 where
 
 import qualified System.Rados.Internal as I
+import qualified System.Rados.Error as E
 import qualified Data.ByteString as B
 import Control.Exception (bracket, onException)
 import Control.Monad.State

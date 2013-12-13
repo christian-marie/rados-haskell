@@ -1,6 +1,10 @@
 {-# LANGUAGE RecordWildCards, DeriveDataTypeable #-}
 module System.Rados.Error
 (
+    RadosError(RadosError),
+    errno,
+    cFunction,
+    strerror,
     checkError,
     checkError_,
 ) where
@@ -16,14 +20,14 @@ import System.Rados.FFI as F
 -- | An error indicated by librados, usually in the form of a negative return
 -- value
 data RadosError = RadosError
-    { errno    :: Int     -- ^ Error number (positive)
-    , function :: String  -- ^ The function that was being called at the time.
-    , strerror :: String  -- ^ The result of strerror
+    { errno     :: Int    -- ^ Error number (positive)
+    , cFunction :: String -- ^ The underlying c function that called
+    , strerror  :: String -- ^ The "nice" error message from strerror
     } deriving (Eq, Ord, Typeable)
 
 instance Show RadosError where
     show RadosError{..} = "rados-haskell: rados error in '" ++ 
-        function ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
+        cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
 
 instance Exception RadosError
 
