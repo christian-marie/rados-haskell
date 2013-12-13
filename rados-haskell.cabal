@@ -23,7 +23,8 @@ library
                        System.Rados.Internal
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=4.6 && <4.7,
-                       bytestring
+                       bytestring,
+                       mtl
   hs-source-dirs:      src
   build-tools:         hsc2hs
   default-language:    Haskell2010
