@@ -1,0 +1,48 @@
+{-# LANGUAGE RecordWildCards, DeriveDataTypeable #-}
+module System.Rados.Error
+(
+    checkError,
+    checkError_,
+) where
+
+import Foreign.C.Error
+import Foreign.C.String
+import Foreign.C.Types
+import Control.Exception
+import Data.Typeable
+import Control.Monad (void)
+import System.Rados.FFI as F
+
+-- | An error indicated by librados, usually in the form of a negative return
+-- value
+data RadosError = RadosError
+    { errno    :: Int     -- ^ Error number (positive)
+    , function :: String  -- ^ The function that was being called at the time.
+    , strerror :: String  -- ^ The result of strerror
+    } deriving (Eq, Ord, Typeable)
+
+instance Show RadosError where
+    show RadosError{..} = "rados-haskell: rados error in '" ++ 
+        function ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
+
+instance Exception RadosError
+
+-- Handle a ceph Errno, which is an errno that must be negated before being
+-- passed to strerror. Otherwise, treat the result as the positive int it is
+-- and pass it straight through.
+--
+-- This is needed for a few methods like rados_read that throw an error or
+-- return the bytes read via the same CInt.
+checkError :: String -> IO CInt -> IO Int
+checkError function action = do
+    n <- action
+    if n < 0
+        then do
+            let errno = (-n)
+            strerror <- peekCString =<< F.c_strerror (Errno errno)
+            throwIO $ RadosError (fromIntegral errno) function strerror
+        else return $ fromIntegral n
+
+checkError_ :: String -> IO CInt -> IO ()
+checkError_ desc action = void $ checkError desc action
+
