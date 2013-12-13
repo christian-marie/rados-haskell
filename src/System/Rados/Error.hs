@@ -6,6 +6,7 @@ module System.Rados.Error
     cFunction,
     strerror,
     checkError,
+    checkError',
     checkError_,
 ) where
 
@@ -39,14 +40,17 @@ instance Exception RadosError
 -- return the bytes read via the same CInt.
 checkError :: String -> IO CInt -> IO Int
 checkError function action = do
+    checkError' function action >>= either throwIO return 
+
+checkError' :: String -> IO CInt -> IO (Either RadosError Int)
+checkError' function action = do
     n <- action
     if n < 0
         then do
             let errno = (-n)
             strerror <- peekCString =<< F.c_strerror (Errno errno)
-            throwIO $ RadosError (fromIntegral errno) function strerror
-        else return $ fromIntegral n
+            return $ Left $ RadosError (fromIntegral errno) function strerror
+        else return $ Right $ fromIntegral n
 
 checkError_ :: String -> IO CInt -> IO ()
 checkError_ desc action = void $ checkError desc action
-

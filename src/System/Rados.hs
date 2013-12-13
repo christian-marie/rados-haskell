@@ -44,7 +44,6 @@ module System.Rados
     -- ** Completion functions
     allComplete,
     allSafe,
-    noWait,
     -- ** Async functions
     asyncWrite,
     asyncWriteFull,
@@ -125,6 +124,10 @@ readConfig = flip I.confReadFile
 -- runAsync will not return until the completion function has returned and it
 -- has cleaned up all resources.
 --
+-- The return value is a list of 'Maybe' 'RadosError', corresponding to the
+-- possible errors associated with actions in the order of which they are
+-- executed within the monad.
+--
 -- @
 -- ...
 --         runAsync allSafe $ do
@@ -133,10 +136,11 @@ readConfig = flip I.confReadFile
 --         putStrLn \"oid2 and oid3 were written to stable storage\"
 -- ...
 -- @
-runAsync :: ([I.Completion] -> IO ()) -> Async a -> IO a
+runAsync :: ([I.Completion] -> IO ()) -> Async a -> IO [Maybe E.RadosError]
 runAsync check (Async a) = do
-    (result, completions) <- runStateT a []
+    (_, completions) <- runStateT a []
     check completions
+    result <- mapM I.getAsyncError completions
     mapM_ I.cleanupCompletion completions
     return result
 
@@ -181,8 +185,3 @@ allComplete = mapM_ I.waitForComplete
 -- All actions are in stable storage on all replicas.
 allSafe :: [I.Completion] -> IO ()
 allSafe = mapM_ I.waitForSafe
-
--- |
--- Don't care where the actions are.
-noWait :: [I.Completion] -> IO ()
-noWait _ = return ()

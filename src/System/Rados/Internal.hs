@@ -30,9 +30,11 @@ module System.Rados.Internal
     asyncWrite,
     asyncWriteFull,
     asyncAppend,
+    getAsyncError,
 ) where
 
 import qualified System.Rados.FFI as F
+import qualified System.Rados.Error as E
 import System.Rados.Error(checkError, checkError_)
 
 import Data.ByteString as B
@@ -218,6 +220,13 @@ isComplete (Completion rados_completion_t_ptr) =
 isSafe :: Completion -> IO (Bool)
 isSafe (Completion rados_completion_t_ptr) = 
     (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
+
+
+getAsyncError :: Completion -> IO (Maybe E.RadosError)
+getAsyncError (Completion rados_completion_t_ptr) = do
+    result <- E.checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
+    return $ either Just (\_ -> Nothing) result
+
 
 -- |
 -- From right to left, this function reads as:
