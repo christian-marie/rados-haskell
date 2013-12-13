@@ -1,10 +1,13 @@
-{-# LANGUAGE ForeignFunctionInterface, EmptyDataDecls #-}
+{-# LANGUAGE CPP                      #-}
+{-# LANGUAGE EmptyDataDecls           #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+
 module System.Rados.FFI where
 
 import Foreign
-import Foreign.C.Types
-import Foreign.C.String
 import Foreign.C.Error
+import Foreign.C.String
+import Foreign.C.Types
 
 #include <rados/librados.h>
 
@@ -34,10 +37,11 @@ foreign import ccall unsafe "librados.h rados_connect"
     c_rados_connect :: Ptr RadosT -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_ioctx_create"
-    c_rados_ioctx_create :: Ptr RadosT
-    			    -> CString
-			    -> Ptr (Ptr RadosIOCtxT)
-			    -> IO CInt
+    c_rados_ioctx_create
+        :: Ptr RadosT
+        -> CString
+        -> Ptr (Ptr RadosIOCtxT)
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_ioctx_destroy"
     c_rados_ioctx_destroy :: Ptr RadosIOCtxT -> IO ()
@@ -46,11 +50,12 @@ foreign import ccall unsafe "wrapper"
     c_wrap_callback :: RadosCallback -> IO RadosCallbackT
 
 foreign import ccall unsafe "librados.h rados_aio_create_completion"
-    c_rados_aio_create_completion :: Ptr ()
-				   -> RadosCallbackT
-				   -> RadosCallbackT
-				   -> Ptr (Ptr RadosCompletionT)
-				   -> IO CInt
+    c_rados_aio_create_completion
+        :: Ptr ()
+        -> RadosCallbackT
+        -> RadosCallbackT
+        -> Ptr (Ptr RadosCompletionT)
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_aio_release"
     c_rados_aio_release :: Ptr RadosCompletionT -> IO ()
@@ -74,62 +79,71 @@ foreign import ccall unsafe "librados.h rados_aio_get_return_value"
     c_rados_aio_get_return_value :: Ptr RadosCompletionT -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_aio_write"
-    c_rados_aio_write :: Ptr RadosIOCtxT 
-    			 -> CString
-			 -> Ptr RadosCompletionT
-			 -> CString
-			 -> CSize
-			 -> CULLong
-			 -> IO CInt
+    c_rados_aio_write
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> CString
+        -> CSize
+        -> CULLong
+        -> IO CInt
+
 
 foreign import ccall unsafe "librados.h rados_aio_write_full"
-    c_rados_aio_write_full :: Ptr RadosIOCtxT 
-    	                   -> CString
-		           -> Ptr RadosCompletionT
-		           -> CString
-		           -> CSize
-		           -> IO CInt
+    c_rados_aio_write_full
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> CString
+        -> CSize
+        -> IO CInt
 
 
 foreign import ccall unsafe "librados.h rados_aio_append"
-    c_rados_aio_append :: Ptr RadosIOCtxT 
-    	               -> CString
-		       -> Ptr RadosCompletionT
-		       -> CString
-		       -> CSize
-		       -> IO CInt
+    c_rados_aio_append
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> CString
+        -> CSize
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_write"
-    c_rados_write :: Ptr RadosIOCtxT 
-    	             -> CString
-	             -> CString
-	             -> CSize
-	             -> CULLong
-	             -> IO CInt
+    c_rados_write :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CSize
+        -> CULLong
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_write_full"
-    c_rados_write_full :: Ptr RadosIOCtxT 
-    	                  -> CString
-	                  -> CString
-	                  -> CSize
-	                  -> IO CInt
+    c_rados_write_full
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CSize
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_append"
-    c_rados_append :: Ptr RadosIOCtxT 
-    	           -> CString
-	           -> CString
-	           -> CSize
-	           -> IO CInt
+    c_rados_append
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CSize
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_read"
-    c_rados_read :: Ptr RadosIOCtxT 
-    	            -> CString
-	            -> CString
-	            -> CSize
-	            -> CULLong
-	            -> IO CInt
+    c_rados_read
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CSize
+        -> CULLong
+        -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_remove"
-    c_rados_remove :: Ptr RadosIOCtxT
-		    -> CString
-	            -> IO CInt
+    c_rados_remove
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> IO CInt
+

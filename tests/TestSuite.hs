@@ -45,7 +45,7 @@ suite = do
 
 
 testConnectionHost = do
-    it "able to establish connetion to local Ceph cluster" $ 
+    it "able to establish connetion to local Ceph cluster" $
         pendingWith "needs a test evaluating Connection only"
 
 
