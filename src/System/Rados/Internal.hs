@@ -356,7 +356,7 @@ syncRead :: Pool
     -> Word64
     -> Word64
     -> IO B.ByteString
-syncRead (Pool ioctxt_ptr) oid len offset =
+syncRead (Pool ioctxt_ptr) oid offset len =
     allocaBytes (fromIntegral len) $ \c_buf ->
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = CULLong offset
