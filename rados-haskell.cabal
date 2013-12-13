@@ -29,3 +29,22 @@ library
   build-tools:         hsc2hs
   default-language:    Haskell2010
   extra-libraries:     rados
+
+
+test-suite             check
+  type:                exitcode-stdio-1.0
+  other-extensions:    ForeignFunctionInterface
+  build-depends:       base >=4.6 && <4.7,
+                       bytestring,
+                       hspec,
+                       HUnit,
+                       mtl,
+                       rados-haskell
+  hs-source-dirs:      tests
+  main-is:             check.hs
+  build-tools:         hsc2hs
+  default-language:    Haskell2010
+  extra-libraries:     rados
+
+
+-- vim: set tabstop=23 expandtab:
