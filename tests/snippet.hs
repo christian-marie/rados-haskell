@@ -21,5 +21,5 @@ main = do
     withConnection Nothing (readConfig "/etc/ceph/ceph.conf") $ \connection ->
         withPool connection "test1" $ \pool ->
             runAsync allSafe $ do
-                asyncWriteFull pool "oid" "schrodinger's hai?\n"
-                asyncWrite pool "oid" 14 "cat"
+                asyncWriteFull pool "tests/snippet.hs" "schrodinger's hai?\n"
+                asyncWrite pool "tests/snippet.hs" 14 "cat"

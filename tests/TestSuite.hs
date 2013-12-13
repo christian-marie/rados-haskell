@@ -53,20 +53,20 @@ testPutObject =
     it "write object accepted by storage cluster" $ do
         withConnection Nothing (readConfig "/etc/ceph/ceph.conf") $ \connection ->
             withPool connection "test1" (\pool -> do
-                syncWriteFull pool "test-rados-haskell" "schrodinger's hai?\n"
-                syncWrite pool "test-rados-haskell" 14 "cat"
+                syncWriteFull pool "test/TestSuite.hs" "schrodinger's hai?\n"
+                syncWrite pool "test/TestSuite.hs" 14 "cat"
                 assertBool "Failed" True)
 
 testGetObject =
     it "read object returns correct data" $ do
         withConnection Nothing (readConfig "/etc/ceph/ceph.conf") (\connection ->
             withPool connection "test1" $ \pool -> do
-                x' <- syncRead pool "test-rados-haskell" 0 1024
+                x' <- syncRead pool "test/TestSuite.hs" 0 1024
                 assertEqual "Incorrect content read" "schrodinger's cat?\n" x')
 
 testDeleteObject =
     it "deletes the object afterward" $ do
         withConnection Nothing (readConfig "/etc/ceph/ceph.conf") (\connection ->
             withPool connection "test1" $ \pool -> do
-                syncRemove pool "test-rados-haskell"
+                syncRemove pool "test/TestSuite.hs"
                 assertBool "Failed" True)
