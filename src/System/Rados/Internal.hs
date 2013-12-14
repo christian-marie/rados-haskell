@@ -69,7 +69,7 @@ newtype Completion    = Completion (Ptr F.RadosCompletionT)
 newConnection :: Maybe B.ByteString -> IO (Connection)
 newConnection maybe_bs =
     alloca $ \rados_t_ptr_ptr -> do
-        checkError "rados_create" $ case maybe_bs of
+        checkError_ "rados_create" $ case maybe_bs of
             Nothing ->
                 F.c_rados_create rados_t_ptr_ptr nullPtr
             Just bs -> B.useAsCString bs $ \cstr ->
@@ -131,7 +131,7 @@ newPool :: Connection -> B.ByteString -> IO (Pool)
 newPool (Connection rados_t_ptr) bs =
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
-        checkError "rados_ioctx_create" $
+        checkError_ "rados_ioctx_create" $
             F.c_rados_ioctx_create rados_t_ptr cstr ioctx_ptr_ptr
         Pool <$> peek ioctx_ptr_ptr
 
@@ -154,7 +154,7 @@ cleanupPool (Pool ptr) = F.c_rados_ioctx_destroy ptr
 newCompletion :: IO Completion
 newCompletion =
     alloca $ \completion_ptr_ptr -> do
-        checkError "rados_aio_create_completion" $
+        checkError_ "rados_aio_create_completion" $
             F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_ptr_ptr
         Completion <$> peek completion_ptr_ptr
 
