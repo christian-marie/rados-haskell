@@ -34,7 +34,7 @@ module System.Rados.Internal
     getAsyncError,
 ) where
 
-import System.Rados.Error (checkError, checkError_)
+import System.Rados.Error (checkError, checkError_, checkError')
 import qualified System.Rados.Error as E
 import qualified System.Rados.FFI as F
 
@@ -225,7 +225,7 @@ isSafe (Completion rados_completion_t_ptr) =
 
 getAsyncError :: Completion -> IO (Maybe E.RadosError)
 getAsyncError (Completion rados_completion_t_ptr) = do
-    result <- E.checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
+    result <- checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
     return $ either Just (\_ -> Nothing) result
 
 
@@ -250,13 +250,13 @@ asyncWrite
     -> B.ByteString
     -> Word64
     -> B.ByteString
-    -> IO ()
+    -> IO (Either E.RadosError Int)
 asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
            oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = CULLong offset
-        checkError_ "rados_aio_write" $ F.c_rados_aio_write
+        checkError' "rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size c_offset
 -- |
 -- Same calling convention as asyncWrite, simply omitting an offset.
@@ -269,11 +269,11 @@ asyncWriteFull
     -> Completion
     -> B.ByteString
     -> B.ByteString
-    -> IO ()
+    -> IO (Either E.RadosError Int)
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError_ "rados_aio_write_full" $
+        E.checkError' "rados_aio_write_full" $
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
@@ -287,11 +287,11 @@ asyncAppend
     -> Completion
     -> B.ByteString
     -> B.ByteString
-    -> IO ()
+    -> IO (Either E.RadosError Int)
 asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError_ "rados_aio_append" $ F.c_rados_aio_append
+        checkError' "rados_aio_append" $ F.c_rados_aio_append
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |

@@ -57,12 +57,13 @@ where
 import Control.Exception (bracket, onException)
 import Control.Monad.State
 import qualified Data.ByteString as B
+import Data.Either
 import Data.Word
 import qualified System.Rados.Error as E
 import qualified System.Rados.Internal as I
 
-newtype Async a = Async (StateT [I.Completion] IO a)
-    deriving (Monad, MonadIO, MonadState [I.Completion])
+newtype Async a = Async (StateT [Either E.RadosError I.Completion] IO a)
+    deriving (Monad, MonadIO, MonadState [Either E.RadosError I.Completion])
 
 -- |
 -- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
@@ -140,11 +141,11 @@ readConfig = flip I.confReadFile
 -- @
 runAsync :: ([I.Completion] -> IO ()) -> Async a -> IO [Maybe E.RadosError]
 runAsync check (Async a) = do
-    (_, completions) <- runStateT a []
-    check completions
-    result <- mapM I.getAsyncError completions
-    mapM_ I.cleanupCompletion completions
-    return result
+    (_, results) <- runStateT a []
+    errors <- forM results $ either (return . Just) I.getAsyncError
+    check $ rights results
+    mapM_ I.cleanupCompletion $ rights results
+    return errors
 
 -- |
 -- The same as 'syncWrite', but does not block.
@@ -169,14 +170,20 @@ asyncAppend pool oid buffer = do
 
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withCompletion :: (I.Completion -> IO a) -> Async a
+withCompletion :: (I.Completion -> IO (Either E.RadosError Int)) -> Async ()
 withCompletion f = do
     completion <- liftIO $ I.newCompletion
-    result     <- liftIO $ onException
-        (f completion)
-        (I.cleanupCompletion completion)
-    modify (\xs -> (completion:xs))
-    return result
+    result     <- liftIO $ f completion
+    case result of
+        -- Our async action either fails to launch at all, in which case we
+        -- have an error right now.
+        Left error -> do
+            liftIO $ I.cleanupCompletion completion
+            modify (\xs -> (Left error):xs )
+        -- Or, it can fail later. In which case we will check it when the
+        -- monad chain is evaluated.
+        Right _ ->
+            modify (\xs -> (Right completion):xs)
 
 -- |
 -- All actions are in memory on all replicas.
