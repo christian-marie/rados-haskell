@@ -1,4 +1,4 @@
-all: 
+all:
 
 #
 # The name of the binary(ies) you want to build if `make` is invoked without an
@@ -58,9 +58,13 @@ endif
 # Source files, main and testing
 #
 
-FFI_SOURCES=$(shell find src -name '*.hsc' -type f | perl -p -e 's/hsc$$/hs/; s{src}{$(BUILDDIR)/generated};')
-CORE_SOURCES=$(shell find src -name '*.hs' -type f) $(FFI_SOURCES)
-TEST_SOURCES=$(shell find tests -name '*.hs' -type f)
+FFI_SOURCES=\
+	$(shell find src -name '*.hsc' -type f)
+CORE_SOURCES=\
+	$(shell find src -name '*.hs' -type f) \
+	$(shell echo $(FFI_SOURCES) | perl -p -e 's/hsc$$/hs/; s{src}{$(BUILDDIR)/generated};')
+TEST_SOURCES=\
+	$(shell find tests -name '*.hs' -type f)
 
 
 %: $(BUILDDIR)/%.bin
@@ -137,7 +141,7 @@ clean:
 	-rm -f config.h
 
 
-format: $(CORE_SOURCES) $(TEST_SOURCES)
+format: $(FFI_SOURCES) $(CORE_SOURCES) $(TEST_SOURCES)
 	stylish-haskell -i $^
 
 #

@@ -34,16 +34,16 @@ module System.Rados.Internal
     getAsyncError,
 ) where
 
-import qualified System.Rados.FFI as F
+import System.Rados.Error (checkError, checkError_)
 import qualified System.Rados.Error as E
-import System.Rados.Error(checkError, checkError_)
+import qualified System.Rados.FFI as F
 
-import Data.ByteString as B
-import Foreign hiding (void, Pool, newPool)
-import Foreign.C.String
-import Foreign.C.Types
 import Control.Applicative
 import Control.Monad (void)
+import Data.ByteString as B
+import Foreign hiding (Pool, newPool, void)
+import Foreign.C.String
+import Foreign.C.Types
 
 -- | A connection to a rados cluster, required to get a 'Pool'
 newtype Connection = Connection (Ptr F.RadosT)
@@ -128,7 +128,7 @@ connect (Connection rados_t_ptr) =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
 newPool :: Connection -> B.ByteString -> IO (Pool)
-newPool (Connection rados_t_ptr) bs = 
+newPool (Connection rados_t_ptr) bs =
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
         checkError "rados_ioctx_create" $
@@ -164,7 +164,7 @@ newCompletion =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_release>
 cleanupCompletion :: Completion -> IO ()
-cleanupCompletion (Completion rados_completion_t_ptr) = 
+cleanupCompletion (Completion rados_completion_t_ptr) =
     F.c_rados_aio_release rados_completion_t_ptr
 
 -- |
@@ -209,7 +209,7 @@ waitForSafe (Completion rados_completion_t_ptr) = void $
 -- Cals rados_aio_is_complete:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_complete>
 isComplete :: Completion -> IO (Bool)
-isComplete (Completion rados_completion_t_ptr) = 
+isComplete (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_complete rados_completion_t_ptr
 
 -- |
@@ -219,7 +219,7 @@ isComplete (Completion rados_completion_t_ptr) =
 -- Calls rados_aio_is_safe:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_safe>
 isSafe :: Completion -> IO (Bool)
-isSafe (Completion rados_completion_t_ptr) = 
+isSafe (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
 
@@ -271,7 +271,7 @@ asyncWriteFull :: Pool
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        checkError_ "rados_aio_write_full" $ 
+        checkError_ "rados_aio_write_full" $
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
@@ -353,7 +353,7 @@ syncAppend (Pool ioctxt_ptr) oid bs =
 -- @
 --         ...
 --         -- Read 100 bytes into bs from offset 42
---         bs <- syncRead pool \"object_id\" 42 100 
+--         bs <- syncRead pool \"object_id\" 42 100
 --         ...
 -- @
 syncRead :: Pool
@@ -370,7 +370,7 @@ syncRead (Pool ioctxt_ptr) oid offset len =
             ioctxt_ptr c_oid c_buf c_len c_offset
         B.packCStringLen (c_buf, read_bytes)
 
-useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a 
+useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a
 useAsCStringCSize bs f =
     B.useAsCStringLen bs $ \(cstr, len) -> f (cstr, (CSize . fromIntegral) len)
 

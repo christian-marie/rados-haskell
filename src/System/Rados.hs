@@ -54,12 +54,12 @@ module System.Rados
 )
 where
 
-import qualified System.Rados.Internal as I
-import qualified System.Rados.Error as E
-import qualified Data.ByteString as B
 import Control.Exception (bracket, onException)
 import Control.Monad.State
+import qualified Data.ByteString as B
 import Data.Word
+import qualified System.Rados.Error as E
+import qualified System.Rados.Internal as I
 
 newtype Async a = Async (StateT [I.Completion] IO a)
     deriving (Monad, MonadIO, MonadState [I.Completion])
@@ -70,7 +70,7 @@ newtype Async a = Async (StateT [I.Completion] IO a)
 -- First argument is an optional user to connect as.
 --
 -- Second argument is an action that configures the handle prior to connection.
--- 
+--
 -- Third argument is the action to run with the connection made.
 --
 -- @
@@ -116,7 +116,7 @@ readConfig = flip I.confReadFile
 -- |
 -- Run some write actions asyncronously, then wait on all of these actions
 -- using a completion function.
--- 
+--
 -- You may chose how to wait on the actions run within the Async monad
 -- when you provide a completion function, this function will iterate over
 -- the internal completions associated with each action and wait
@@ -149,20 +149,20 @@ runAsync check (Async a) = do
 -- The same as 'syncWrite', but does not block.
 asyncWrite :: I.Pool -> B.ByteString -> Word64 -> B.ByteString -> Async ()
 asyncWrite pool oid offset buffer = do
-    withCompletion $ \completion -> 
+    withCompletion $ \completion ->
         I.asyncWrite pool completion oid offset buffer
 -- |
 -- The same as 'syncWriteFull', but does not block.
 asyncWriteFull :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
 asyncWriteFull pool oid buffer = do
-    withCompletion $ \completion -> 
+    withCompletion $ \completion ->
         I.asyncWriteFull pool completion oid buffer
 
 -- |
 -- The same as 'syncWriteAppend', but does not block.
 asyncAppend :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
 asyncAppend pool oid buffer = do
-    withCompletion $ \completion -> 
+    withCompletion $ \completion ->
         I.asyncAppend pool completion oid buffer
 
 

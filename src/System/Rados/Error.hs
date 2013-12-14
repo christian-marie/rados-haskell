@@ -1,4 +1,5 @@
-{-# LANGUAGE RecordWildCards, DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RecordWildCards    #-}
 module System.Rados.Error
 (
     RadosError(RadosError),
@@ -10,12 +11,12 @@ module System.Rados.Error
     checkError_,
 ) where
 
+import Control.Exception
+import Control.Monad (void)
+import Data.Typeable
 import Foreign.C.Error
 import Foreign.C.String
 import Foreign.C.Types
-import Control.Exception
-import Data.Typeable
-import Control.Monad (void)
 import System.Rados.FFI as F
 
 -- | An error indicated by librados, usually in the form of a negative return
@@ -27,7 +28,7 @@ data RadosError = RadosError
     } deriving (Eq, Ord, Typeable)
 
 instance Show RadosError where
-    show RadosError{..} = "rados-haskell: rados error in '" ++ 
+    show RadosError{..} = "rados-haskell: rados error in '" ++
         cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
 
 instance Exception RadosError
@@ -40,7 +41,7 @@ instance Exception RadosError
 -- return the bytes read via the same CInt.
 checkError :: String -> IO CInt -> IO Int
 checkError function action = do
-    checkError' function action >>= either throwIO return 
+    checkError' function action >>= either throwIO return
 
 checkError' :: String -> IO CInt -> IO (Either RadosError Int)
 checkError' function action = do
