@@ -77,10 +77,11 @@ newtype Async a = Async (StateT [I.Completion] IO a)
 -- withConnection (readConfig \"ceph.conf\") $ \\connection -> do
 --     ...
 -- @
-withConnection :: Maybe B.ByteString
-                  -> (I.Connection -> IO ()) -- configure action
-                  -> (I.Connection -> IO a) -- user action
-                  -> IO a
+withConnection
+    :: Maybe B.ByteString
+    -> (I.Connection -> IO ()) -- configure action
+    -> (I.Connection -> IO a) -- user action
+    -> IO a
 withConnection user configure action =
     bracket
         (do h <- I.newConnection user

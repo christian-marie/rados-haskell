@@ -244,12 +244,13 @@ getAsyncError (Completion rados_completion_t_ptr) = do
 --
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write>
-asyncWrite :: Pool
-           -> Completion
-           -> B.ByteString
-           -> Word64
-           -> B.ByteString
-           -> IO ()
+asyncWrite
+    :: Pool
+    -> Completion
+    -> B.ByteString
+    -> Word64
+    -> B.ByteString
+    -> IO ()
 asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
            oid offset bs =
     B.useAsCString oid   $ \c_oid ->
@@ -263,11 +264,12 @@ asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write_full>
-asyncWriteFull :: Pool
-              -> Completion
-              -> B.ByteString
-              -> B.ByteString
-              -> IO ()
+asyncWriteFull
+    :: Pool
+    -> Completion
+    -> B.ByteString
+    -> B.ByteString
+    -> IO ()
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
@@ -280,11 +282,12 @@ asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
-asyncAppend :: Pool
-              -> Completion
-              -> B.ByteString
-              -> B.ByteString
-              -> IO ()
+asyncAppend
+    :: Pool
+    -> Completion
+    -> B.ByteString
+    -> B.ByteString
+    -> IO ()
 asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
@@ -298,11 +301,12 @@ asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
 -- ...
 -- syncWrite Pool \"object_id\" 42 \"written at offset fourty-two\"
 -- @
-syncWrite :: Pool
-          -> B.ByteString
-          -> Word64
-          -> B.ByteString
-          -> IO ()
+syncWrite
+    :: Pool
+    -> B.ByteString
+    -> Word64
+    -> B.ByteString
+    -> IO ()
 syncWrite (Pool ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
@@ -314,10 +318,11 @@ syncWrite (Pool ioctxt_ptr) oid offset bs =
 -- Write a 'ByteString' to 'Pool' and object id.
 --
 -- This will replace any existing object at the same 'Pool' and object id.
-syncWriteFull :: Pool
-         -> B.ByteString
-         -> B.ByteString
-         -> IO ()
+syncWriteFull
+    :: Pool
+    -> B.ByteString
+    -> B.ByteString
+    -> IO ()
 syncWriteFull (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, len) -> do
@@ -328,10 +333,11 @@ syncWriteFull (Pool ioctxt_ptr) oid bs =
 -- Append a 'ByteString' to 'Pool' and object id.
 --
 -- Returns the number of bytes written.
-syncAppend :: Pool
-         -> B.ByteString
-         -> B.ByteString
-         -> IO ()
+syncAppend
+    :: Pool
+    -> B.ByteString
+    -> B.ByteString
+    -> IO ()
 syncAppend (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
@@ -356,7 +362,8 @@ syncAppend (Pool ioctxt_ptr) oid bs =
 --         bs <- syncRead pool \"object_id\" 42 100
 --         ...
 -- @
-syncRead :: Pool
+syncRead
+    :: Pool
     -> B.ByteString
     -> Word64
     -> Word64

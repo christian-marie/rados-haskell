@@ -34,8 +34,8 @@ instance Show RadosError where
 instance Exception RadosError
 
 -- Handle a ceph Errno, which is an errno that must be negated before being
--- passed to strerror. Otherwise, treat the result as the positive int it is
--- and pass it straight through.
+-- passed to strerror. Otherwise, treat the result a positive int and pass it
+-- straight through.
 --
 -- This is needed for a few methods like rados_read that throw an error or
 -- return the bytes read via the same CInt.
