@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE EmptyDataDecls           #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
@@ -8,8 +7,6 @@ import Foreign
 import Foreign.C.Error
 import Foreign.C.String
 import Foreign.C.Types
-
-#include <rados/librados.h>
 
 -- typedef void *rados_t;
 data RadosT
