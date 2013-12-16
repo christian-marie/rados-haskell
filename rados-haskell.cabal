@@ -24,7 +24,8 @@ library
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=4.6 && <4.7,
                        bytestring,
-                       mtl
+                       mtl,
+                       hspec
   hs-source-dirs:      src
   default-language:    Haskell2010
   extra-libraries:     rados
