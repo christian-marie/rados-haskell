@@ -26,7 +26,6 @@ library
                        bytestring,
                        mtl
   hs-source-dirs:      src
-  build-tools:         hsc2hs
   default-language:    Haskell2010
   extra-libraries:     rados
 
@@ -42,7 +41,6 @@ test-suite             check
                        rados-haskell
   hs-source-dirs:      tests
   main-is:             check.hs
-  build-tools:         hsc2hs
   default-language:    Haskell2010
   extra-libraries:     rados
 

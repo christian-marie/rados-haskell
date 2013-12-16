@@ -58,13 +58,8 @@ endif
 # Source files, main and testing
 #
 
-FFI_SOURCES=\
-	$(shell find src -name '*.hsc' -type f)
-CORE_SOURCES=\
-	$(shell find src -name '*.hs' -type f) \
-	$(shell echo $(FFI_SOURCES) | perl -p -e 's/hsc$$/hs/; s{src}{$(BUILDDIR)/generated};')
-TEST_SOURCES=\
-	$(shell find tests -name '*.hs' -type f)
+CORE_SOURCES=$(shell find src -name '*.hs' -type f) 
+TEST_SOURCES=$(shell find tests -name '*.hs' -type f)
 
 
 %: $(BUILDDIR)/%.bin
@@ -83,9 +78,6 @@ $(BUILDDIR)/%.bin: config.h src/%.hs $(CORE_SOURCES) tags
 		-o $@ \
 		src/$*.hs
 
-%.hs: %.hsc
-	hsc2hs -o $@ $<
-
 tags: $(CORE_SOURCES) $(TEST_SOURCES)
 	@/bin/echo -e "CTAGS\ttags"
 	@hothasktags $^ > tags $(REDIRECT)
@@ -95,12 +87,6 @@ tags: $(CORE_SOURCES) $(TEST_SOURCES)
 #
 
 tests: config check
-
-$(BUILDDIR)/generated/%.hs: src/%.hsc
-	@if [ ! -d $(BUILDDIR)/generated ] ; then /bin/echo -e "MKDIR\t$(BUILDDIR)/generated" ; mkdir -p $(BUILDDIR)/generated ; fi
-	mkdir -p `dirname $@`
-	hsc2hs -o $@ $<
-
 
 $(BUILDDIR)/%.bin: config.h tests/%.hs $(CORE_SOURCES) $(TEST_SOURCES)
 	@if [ ! -d $(BUILDDIR) ] ; then /bin/echo -e "MKDIR\t$(BUILDDIR)" ; mkdir -p $(BUILDDIR) ; fi
@@ -141,7 +127,7 @@ clean:
 	-rm -f config.h
 
 
-format: $(FFI_SOURCES) $(CORE_SOURCES) $(TEST_SOURCES)
+format: $(CORE_SOURCES) $(TEST_SOURCES)
 	stylish-haskell -i $^
 
 #
