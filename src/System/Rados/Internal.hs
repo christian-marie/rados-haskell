@@ -34,7 +34,7 @@ module System.Rados.Internal
     getAsyncError,
 ) where
 
-import System.Rados.Error (checkError, checkError_, checkError')
+import System.Rados.Error (checkError, checkError', checkError_)
 import qualified System.Rados.Error as E
 import qualified System.Rados.FFI as F
 

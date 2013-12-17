@@ -15,10 +15,7 @@ module System.Rados
     --   where tryHai = withConnection Nothing (readConfig \"/dev/null\")
     --                                         (\\_ -> putStrLn \"hai\")
     -- @
-    E.RadosError(RadosError),
-    E.cFunction,
-    E.errno,
-    E.strerror,
+    E.RadosError(RadosError, cFunction, errno, strerror),
     -- *General usage
     -- |
     -- Write an object and then read it back:

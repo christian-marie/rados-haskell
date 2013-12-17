@@ -2,10 +2,7 @@
 {-# LANGUAGE RecordWildCards    #-}
 module System.Rados.Error
 (
-    RadosError(RadosError),
-    errno,
-    cFunction,
-    strerror,
+    RadosError(RadosError, errno, cFunction, strerror),
     checkError,
     checkError',
     checkError_,
@@ -23,8 +20,8 @@ import System.Rados.FFI as F
 -- value
 data RadosError = RadosError
     { errno     :: Int    -- ^ Error number (positive)
-    , cFunction :: String -- ^ The underlying c function that called
-    , strerror  :: String -- ^ The "nice" error message from strerror
+    , cFunction :: String -- ^ The underlying C function that called
+    , strerror  :: String -- ^ The \"nice\" error message from @strerror@
     } deriving (Eq, Ord, Typeable)
 
 instance Show RadosError where
