@@ -1,9 +1,11 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 module System.Rados
 (
     -- *Types
     I.Connection,
     I.Pool,
+    I.TimeVal(..),
     -- *Exceptions
     -- |
     -- This library should only ever throw a 'RadosError'.
@@ -15,10 +17,7 @@ module System.Rados
     --   where tryHai = withConnection Nothing (readConfig \"/dev/null\")
     --                                         (\\_ -> putStrLn \"hai\")
     -- @
-    E.RadosError(RadosError),
-    E.cFunction,
-    E.errno,
-    E.strerror,
+    E.RadosError(..),
     -- *General usage
     -- |
     -- Write an object and then read it back:
@@ -51,16 +50,25 @@ module System.Rados
     asyncAppend,
     -- *Configuration
     readConfig,
+    -- *Locking
+    withExclusiveLock,
+    withIdempotentExclusiveLock,
+    withSharedLock,
+    withIdempotentSharedLock,
 )
 where
 
-import Control.Exception (bracket, onException)
+import Control.Exception (bracket)
 import Control.Monad.State
-import qualified Data.ByteString as B
+import Control.Applicative
+
+import qualified Data.ByteString.Char8 as B
 import Data.Either
 import Data.Word
 import qualified System.Rados.Error as E
 import qualified System.Rados.Internal as I
+import Data.UUID
+import Data.UUID.V4
 
 newtype Async a = Async (StateT [Either E.RadosError I.Completion] IO a)
     deriving (Monad, MonadIO, MonadState [Either E.RadosError I.Completion])
@@ -83,14 +91,13 @@ withConnection
     -> (I.Connection -> IO ()) -- configure action
     -> (I.Connection -> IO a) -- user action
     -> IO a
-withConnection user configure action =
+withConnection user configure=
     bracket
         (do h <- I.newConnection user
             configure h
             I.connect h
             return h)
         I.cleanupConnection
-        action
 
 -- |
 -- Open a 'Pool' with ceph and perform an action with it, cleaning up with
@@ -102,11 +109,10 @@ withConnection user configure action =
 --         ...
 -- @
 withPool :: I.Connection -> B.ByteString -> (I.Pool -> IO a) -> IO a
-withPool connection pool action =
+withPool connection pool =
     bracket
         (I.newPool connection pool)
         I.cleanupPool
-        action
 
 --- |
 -- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
@@ -150,20 +156,20 @@ runAsync check (Async a) = do
 -- |
 -- The same as 'syncWrite', but does not block.
 asyncWrite :: I.Pool -> B.ByteString -> Word64 -> B.ByteString -> Async ()
-asyncWrite pool oid offset buffer = do
+asyncWrite pool oid offset buffer =
     withCompletion $ \completion ->
         I.asyncWrite pool completion oid offset buffer
 -- |
 -- The same as 'syncWriteFull', but does not block.
 asyncWriteFull :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
-asyncWriteFull pool oid buffer = do
+asyncWriteFull pool oid buffer =
     withCompletion $ \completion ->
         I.asyncWriteFull pool completion oid buffer
 
 -- |
 -- The same as 'syncWriteAppend', but does not block.
 asyncAppend :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
-asyncAppend pool oid buffer = do
+asyncAppend pool oid buffer =
     withCompletion $ \completion ->
         I.asyncAppend pool completion oid buffer
 
@@ -172,18 +178,18 @@ asyncAppend pool oid buffer = do
 -- state otherwise.
 withCompletion :: (I.Completion -> IO (Either E.RadosError Int)) -> Async ()
 withCompletion f = do
-    completion <- liftIO $ I.newCompletion
+    completion <- liftIO I.newCompletion
     result     <- liftIO $ f completion
     case result of
         -- Our async action either fails to launch at all, in which case we
         -- have an error right now.
-        Left error -> do
+        Left e -> do
             liftIO $ I.cleanupCompletion completion
-            modify (\xs -> (Left error):xs )
+            modify (\xs -> Left e:xs )
         -- Or, it can fail later. In which case we will check it when the
         -- monad chain is evaluated.
         Right _ ->
-            modify (\xs -> (Right completion):xs)
+            modify (\xs -> Right completion:xs)
 
 -- |
 -- All actions are in memory on all replicas.
@@ -194,3 +200,53 @@ allComplete = mapM_ I.waitForComplete
 -- All actions are in stable storage on all replicas.
 allSafe :: [I.Completion] -> IO ()
 allSafe = mapM_ I.waitForSafe
+
+-- | Perform an action with an exclusive lock on oid
+withExclusiveLock, withIdempotentExclusiveLock
+    :: I.Pool
+    -> B.ByteString    -- ^ oid
+    -> B.ByteString    -- ^ name
+    -> B.ByteString    -- ^ desc
+    -> Maybe I.TimeVal -- ^ duration
+    -> IO a
+    -> IO a
+withExclusiveLock pool oid name desc duration action =
+    withLock pool oid name action $ \cookie -> 
+        I.exclusiveLock pool oid name cookie desc duration []
+
+withIdempotentExclusiveLock pool oid name desc duration action =
+    withLock pool oid name action $ \cookie -> 
+        I.exclusiveLock pool oid name cookie desc duration [I.idempotent]
+-- | Perform an action with an shared lock on oid and tag
+
+withSharedLock, withIdempotentSharedLock
+    :: I.Pool
+    -> B.ByteString    -- ^ oid
+    -> B.ByteString    -- ^ name
+    -> B.ByteString    -- ^ desc
+    -> B.ByteString    -- ^ tag
+    -> Maybe I.TimeVal -- ^ duration
+    -> IO a
+    -> IO a
+withSharedLock pool oid name desc tag duration action =
+    withLock pool oid name action $ \cookie -> 
+        I.sharedLock pool oid name cookie tag desc duration []
+
+withIdempotentSharedLock pool oid name desc tag duration action =
+    withLock pool oid name action $ \cookie ->
+        I.sharedLock pool oid name cookie tag desc duration [I.idempotent]
+
+withLock
+    :: I.Pool
+    -> B.ByteString
+    -> B.ByteString
+    -> IO b
+    -> (B.ByteString -> IO a)
+    -> IO b
+withLock pool oid name user_action lock_action = do
+    cookie <- B.pack . toString <$> nextRandom
+    lock_action cookie
+    result <- user_action
+    I.unlock pool oid name cookie
+    return result
+

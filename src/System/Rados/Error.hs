@@ -2,10 +2,7 @@
 {-# LANGUAGE RecordWildCards    #-}
 module System.Rados.Error
 (
-    RadosError(RadosError),
-    errno,
-    cFunction,
-    strerror,
+    RadosError(..),
     checkError,
     checkError',
     checkError_,

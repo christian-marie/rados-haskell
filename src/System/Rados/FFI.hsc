@@ -8,6 +8,9 @@ import Foreign.C.Error
 import Foreign.C.String
 import Foreign.C.Types
 
+#include <rados/librados.h>
+#include <sys/time.h>
+
 -- typedef void *rados_t;
 data RadosT
 
@@ -17,9 +20,33 @@ data RadosIOCtxT
 -- typedef void *rados_completion_t;
 data RadosCompletionT
 
+newtype LockFlag = LockFlag { unWrap :: Word8 }
+#{enum LockFlag, LockFlag, idempotent = LIBRADOS_LOCK_FLAG_RENEW }
+
 -- typedef void (*rados_callback_t)(rados_completion_t cb, void *arg);
 type RadosCallback  = Ptr RadosCompletionT -> Ptr () -> IO ()
 type RadosCallbackT = FunPtr RadosCallback
+
+
+data TimeVal = TimeVal
+    { seconds      :: CLong 
+    , microseconds :: CLong
+    } deriving (Eq, Show)
+
+-- http://www.haskell.org/haskellwiki/FFICookBook#Working_with_structs
+#{def typedef struct timeval timeval_typedef;}
+#let alignment t = "%lu", (unsigned long)offsetof(struct {char x__; t (y__); }, y__)
+
+instance Storable TimeVal where
+    alignment _ = #{alignment timeval_typedef}
+    sizeOf    _ = #{size timeval_typedef}
+    peek p = do
+        seconds  <-  #{peek timeval_typedef, tv_sec} p
+        microseconds  <- #{peek timeval_typedef, tv_usec} p
+        return $ TimeVal seconds microseconds
+    poke p (TimeVal sec usec) = do
+        #{poke timeval_typedef, tv_sec} p sec
+        #{poke timeval_typedef, tv_usec} p usec
 
 foreign import ccall unsafe "librados.h rados_create"
     c_rados_create :: Ptr (Ptr RadosT) -> CString -> IO CInt
@@ -144,3 +171,33 @@ foreign import ccall unsafe "librados.h rados_remove"
         -> CString
         -> IO CInt
 
+foreign import ccall unsafe "librados.h rados_lock_exclusive"
+    c_rados_lock_exclusive
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CString
+        -> CString
+        -> Ptr TimeVal
+        -> LockFlag
+        -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_unlock"
+    c_rados_unlock
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CString
+        -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_lock_shared"
+    c_rados_lock_shared
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> CString
+        -> CString
+        -> CString
+        -> CString
+        -> Ptr TimeVal
+        -> LockFlag
+        -> IO CInt

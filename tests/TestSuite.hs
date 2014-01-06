@@ -9,7 +9,6 @@
 -- the BSD licence.
 --
 
-{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS -fno-warn-unused-imports #-}
 
@@ -22,6 +21,7 @@ import Test.HUnit
 -- Otherwise redundent imports, but useful for testing in GHCi.
 --
 
+import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
@@ -42,31 +42,44 @@ suite = do
         testPutObject
         testGetObject
         testDeleteObject
+    
+    describe "Locking" $ do
+        testLockWithoutOID
 
+withTestPool :: (Pool -> IO a) -> IO a
+withTestPool f = 
+        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") $ \connection ->
+            withPool connection "test1" f
 
-testConnectionHost = do
+testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
+testLockWithoutOID :: Spec
+testConnectionHost =
     it "able to establish connetion to local Ceph cluster" $
-        pendingWith "needs a test evaluating Connection only"
+        withTestPool $ (\pool -> return $ pool `seq` ()) 
 
 
 testPutObject =
-    it "write object accepted by storage cluster" $ do
-        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") $ \connection ->
-            withPool connection "test1" (\pool -> do
+    it "write object accepted by storage cluster" $
+        withTestPool $ \pool -> do
                 syncWriteFull pool "test/TestSuite.hs" "schrodinger's hai?\n"
                 syncWrite pool "test/TestSuite.hs" 14 "cat"
-                assertBool "Failed" True)
+                assertBool "Failed" True
 
 testGetObject =
-    it "read object returns correct data" $ do
-        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") (\connection ->
-            withPool connection "test1" $ \pool -> do
-                x' <- syncRead pool "test/TestSuite.hs" 0 1024
-                assertEqual "Incorrect content read" "schrodinger's cat?\n" x')
+    it "read object returns correct data" $
+        withTestPool $ \pool -> do
+            x' <- syncRead pool "test/TestSuite.hs" 0 1024
+            assertEqual "Incorrect content read" "schrodinger's cat?\n" x'
 
 testDeleteObject =
-    it "deletes the object afterward" $ do
-        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") (\connection ->
-            withPool connection "test1" $ \pool -> do
-                syncRemove pool "test/TestSuite.hs"
-                assertBool "Failed" True)
+    it "deletes the object afterward" $
+        withTestPool $ \pool -> do
+            syncRemove pool "test/TestSuite.hs"
+            assertBool "Failed" True
+
+testLockWithoutOID =
+    it "locks and unlocks quickly" $
+        withTestPool $ \pool -> do
+            replicateM_ 100 $ 
+                withExclusiveLock pool "locked" "name" "desc" Nothing $
+                    assertBool "Failed" True

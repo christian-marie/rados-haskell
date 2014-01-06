@@ -25,6 +25,7 @@ library
   build-depends:       base >=4.6 && <4.7,
                        bytestring,
                        mtl,
+                       uuid,
                        hspec
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -39,6 +40,7 @@ test-suite             check
                        hspec,
                        HUnit,
                        mtl,
+                       uuid,
                        rados-haskell
   hs-source-dirs:      tests
   main-is:             check.hs

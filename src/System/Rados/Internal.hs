@@ -7,6 +7,8 @@ module System.Rados.Internal
     Connection,
     Completion,
     Pool,
+    F.TimeVal(..),
+    F.LockFlag,
 -- *Connecting
     newConnection,
     cleanupConnection,
@@ -32,6 +34,11 @@ module System.Rados.Internal
     asyncWriteFull,
     asyncAppend,
     getAsyncError,
+-- **Locking
+    exclusiveLock,
+    sharedLock,
+    unlock,
+    F.idempotent,
 ) where
 
 import System.Rados.Error (checkError, checkError_, checkError')
@@ -40,7 +47,7 @@ import qualified System.Rados.FFI as F
 
 import Control.Applicative
 import Control.Monad (void)
-import Data.ByteString as B
+import qualified Data.ByteString as B
 import Foreign hiding (Pool, newPool, void)
 import Foreign.C.String
 import Foreign.C.Types
@@ -66,7 +73,7 @@ newtype Completion    = Completion (Ptr F.RadosCompletionT)
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_create>
-newConnection :: Maybe B.ByteString -> IO (Connection)
+newConnection :: Maybe B.ByteString -> IO Connection
 newConnection maybe_bs =
     alloca $ \rados_t_ptr_ptr -> do
         checkError_ "rados_create" $ case maybe_bs of
@@ -127,7 +134,7 @@ connect (Connection rados_t_ptr) =
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
-newPool :: Connection -> B.ByteString -> IO (Pool)
+newPool :: Connection -> B.ByteString -> IO Pool
 newPool (Connection rados_t_ptr) bs =
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_ptr_ptr -> do
@@ -208,7 +215,7 @@ waitForSafe (Completion rados_completion_t_ptr) = void $
 --
 -- Cals rados_aio_is_complete:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_complete>
-isComplete :: Completion -> IO (Bool)
+isComplete :: Completion -> IO Bool
 isComplete (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_complete rados_completion_t_ptr
 
@@ -218,7 +225,7 @@ isComplete (Completion rados_completion_t_ptr) =
 --
 -- Calls rados_aio_is_safe:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_is_safe>
-isSafe :: Completion -> IO (Bool)
+isSafe :: Completion -> IO Bool
 isSafe (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
@@ -226,7 +233,7 @@ isSafe (Completion rados_completion_t_ptr) =
 getAsyncError :: Completion -> IO (Maybe E.RadosError)
 getAsyncError (Completion rados_completion_t_ptr) = do
     result <- checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
-    return $ either Just (\_ -> Nothing) result
+    return $ either Just (const Nothing) result
 
 
 -- |
@@ -271,8 +278,8 @@ asyncWriteFull
     -> B.ByteString
     -> IO (Either E.RadosError Int)
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
-    B.useAsCString oid        $ \c_oid ->
-    useAsCStringCSize bs $ \(c_buf, c_size) -> do
+    B.useAsCString oid   $ \c_oid ->
+    useAsCStringCSize bs $ \(c_buf, c_size) ->
         E.checkError' "rados_aio_write_full" $
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
@@ -290,7 +297,7 @@ asyncAppend
     -> IO (Either E.RadosError Int)
 asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
-    useAsCStringCSize bs $ \(c_buf, c_size) -> do
+    useAsCStringCSize bs $ \(c_buf, c_size) ->
         checkError' "rados_aio_append" $ F.c_rados_aio_append
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
@@ -325,7 +332,7 @@ syncWriteFull
     -> IO ()
 syncWriteFull (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
-    useAsCStringCSize bs $ \(c_buf, len) -> do
+    useAsCStringCSize bs $ \(c_buf, len) ->
         checkError_ "rados_write_full" $ F.c_rados_write_full
             ioctxt_ptr c_oid c_buf len
 
@@ -340,7 +347,7 @@ syncAppend
     -> IO ()
 syncAppend (Pool ioctxt_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
-    useAsCStringCSize bs $ \(c_buf, c_size) -> do
+    useAsCStringCSize bs $ \(c_buf, c_size) ->
         checkError_ "rados_append" $ F.c_rados_append
             ioctxt_ptr c_oid c_buf c_size
 
@@ -377,7 +384,7 @@ syncRead (Pool ioctxt_ptr) oid offset len =
             ioctxt_ptr c_oid c_buf c_len c_offset
         B.packCStringLen (c_buf, read_bytes)
 
-useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a
+useAsCStringCSize :: B.ByteString -> ((CString, CSize) -> IO a) -> IO a
 useAsCStringCSize bs f =
     B.useAsCStringLen bs $ \(cstr, len) -> f (cstr, (CSize . fromIntegral) len)
 
@@ -392,3 +399,106 @@ syncRemove (Pool ioctxt_ptr) oid =
     B.useAsCString oid   $ \c_oid ->
         checkError_ "rados_remove" $ F.c_rados_remove
             ioctxt_ptr c_oid
+
+combineLockFlags :: [F.LockFlag] -> F.LockFlag
+combineLockFlags = F.LockFlag . foldr ((.|.) . F.unWrap) 0
+
+-- |
+-- Make an exclusive lock
+exclusiveLock
+    :: Pool
+    -> B.ByteString -- ^ oid
+    -> B.ByteString -- ^ name
+    -> B.ByteString -- ^ cookie
+    -> B.ByteString -- ^ desc
+    -> Maybe F.TimeVal
+    -> [F.LockFlag]
+    -> IO ()
+exclusiveLock (Pool ioctx_ptr) oid name cookie desc maybe_duration flags =
+    let flag = combineLockFlags flags in
+        B.useAsCString oid    $ \c_oid ->
+        B.useAsCString name   $ \c_name ->
+        B.useAsCString cookie $ \c_cookie ->
+        B.useAsCString desc   $ \c_desc ->
+        case maybe_duration of
+            Nothing -> 
+                checkError_ "c_rados_lock_exclusive" $
+                    F.c_rados_lock_exclusive ioctx_ptr
+                                            c_oid
+                                            c_name
+                                            c_cookie
+                                            c_desc
+                                            nullPtr
+                                            flag
+            Just duration ->
+                alloca $ \timeval_ptr -> do
+                    poke timeval_ptr duration
+                    checkError_ "c_rados_lock_exclusive" $
+                        F.c_rados_lock_exclusive ioctx_ptr
+                                                 c_oid
+                                                 c_name
+                                                 c_cookie
+                                                 c_desc
+                                                 timeval_ptr
+                                                 flag
+
+-- |
+-- Make a shared lock
+sharedLock
+    :: Pool
+    -> B.ByteString -- ^ oid
+    -> B.ByteString -- ^ name
+    -> B.ByteString -- ^ cookie
+    -> B.ByteString -- ^ tag
+    -> B.ByteString -- ^ desc
+    -> Maybe F.TimeVal
+    -> [F.LockFlag]
+    -> IO ()
+sharedLock (Pool ioctx_ptr) oid name cookie tag desc maybe_duration flags =
+    let flag = combineLockFlags flags in
+        B.useAsCString oid    $ \c_oid ->
+        B.useAsCString name   $ \c_name ->
+        B.useAsCString cookie $ \c_cookie ->
+        B.useAsCString tag   $ \c_tag ->
+        B.useAsCString desc   $ \c_desc ->
+        case maybe_duration of
+            Nothing -> 
+                checkError_ "c_rados_lock_shared" $
+                    F.c_rados_lock_shared ioctx_ptr
+                                            c_oid
+                                            c_name
+                                            c_cookie
+                                            c_tag
+                                            c_desc
+                                            nullPtr
+                                            flag
+            Just duration ->
+                alloca $ \timeval_ptr -> do
+                    poke timeval_ptr duration
+                    checkError_ "c_rados_lock_shared" $
+                        F.c_rados_lock_shared ioctx_ptr
+                                                 c_oid
+                                                 c_name
+                                                 c_cookie
+                                                 c_tag
+                                                 c_desc
+                                                 timeval_ptr
+                                                 flag
+--
+-- |
+-- Release a lock of any sort
+unlock
+    :: Pool
+    -> B.ByteString -- ^ oid
+    -> B.ByteString -- ^ name
+    -> B.ByteString -- ^ cookie
+    -> IO ()
+unlock (Pool ioctx_ptr) oid name cookie =
+    B.useAsCString oid    $ \c_oid ->
+    B.useAsCString name   $ \c_name ->
+    B.useAsCString cookie $ \c_cookie ->
+        checkError_ "c_rados_unlock" $
+            F.c_rados_unlock ioctx_ptr
+                             c_oid
+                             c_name
+                             c_cookie
