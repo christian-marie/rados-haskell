@@ -41,7 +41,7 @@ module System.Rados.Internal
     F.idempotent,
 ) where
 
-import System.Rados.Error (checkError, checkError_, checkError')
+import System.Rados.Error (checkError, checkError', checkError_)
 import qualified System.Rados.Error as E
 import qualified System.Rados.FFI as F
 
