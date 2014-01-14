@@ -401,7 +401,7 @@ syncRemove (Pool ioctxt_ptr) oid =
             ioctxt_ptr c_oid
 
 combineLockFlags :: [F.LockFlag] -> F.LockFlag
-combineLockFlags = F.LockFlag . foldr ((.|.) . F.unWrap) 0
+combineLockFlags = F.LockFlag . foldr ((.|.) . F.unLockFlag) 0
 
 -- |
 -- Make an exclusive lock

@@ -1,7 +1,41 @@
 {-# LANGUAGE EmptyDataDecls           #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
-module System.Rados.FFI where
+module System.Rados.FFI
+(
+    TimeVal(..),
+    RadosT,
+    RadosIOCtxT,
+    RadosCompletionT,
+    LockFlag(..),
+    idempotent,
+    c_rados_create,
+    c_rados_shutdown,
+    c_rados_conf_read_file,
+    c_rados_connect,
+    c_rados_ioctx_create,
+    c_rados_ioctx_destroy,
+    c_rados_aio_create_completion,
+    c_rados_aio_release,
+    c_rados_aio_wait_for_complete,
+    c_rados_aio_wait_for_safe,
+    c_rados_aio_is_complete,
+    c_rados_aio_is_safe,
+    c_rados_aio_get_return_value,
+    c_rados_aio_write,
+    c_rados_aio_write_full,
+    c_rados_aio_append,
+    c_rados_write,
+    c_rados_write_full,
+    c_rados_append,
+    c_rados_read,
+    c_rados_remove,
+    c_rados_lock_exclusive,
+    c_rados_unlock,
+    c_rados_lock_shared,
+    c_strerror,
+)
+where
 
 import Foreign
 import Foreign.C.Error
@@ -20,7 +54,7 @@ data RadosIOCtxT
 -- typedef void *rados_completion_t;
 data RadosCompletionT
 
-newtype LockFlag = LockFlag { unWrap :: Word8 }
+newtype LockFlag = LockFlag { unLockFlag :: Word8 }
 #{enum LockFlag, LockFlag, idempotent = LIBRADOS_LOCK_FLAG_RENEW }
 
 -- typedef void (*rados_callback_t)(rados_completion_t cb, void *arg);
@@ -32,6 +66,14 @@ data TimeVal = TimeVal
     { seconds      :: CLong 
     , microseconds :: CLong
     } deriving (Eq, Show)
+
+instance Num TimeVal where
+    (+) = undefined
+    (*) = undefined
+    (-) = undefined
+    abs = undefined
+    signum = undefined
+    fromInteger i = let clong = fromIntegral i in TimeVal clong 0
 
 -- http://www.haskell.org/haskellwiki/FFICookBook#Working_with_structs
 #{def typedef struct timeval timeval_typedef;}
