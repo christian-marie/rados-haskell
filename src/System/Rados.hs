@@ -58,7 +58,7 @@ module System.Rados
 )
 where
 
-import Control.Exception (bracket)
+import Control.Exception (bracket, bracket_)
 import Control.Monad.State
 import Control.Applicative
 
@@ -244,11 +244,8 @@ withLock
     -> (B.ByteString -> IO a)
     -> IO b
 withLock pool oid name user_action lock_action = do
-    bracket
-        (do cookie <- B.pack . toString <$> nextRandom
-            lock_action cookie
-            return cookie)
-        (I.unlock pool oid name)
-        (\_ -> user_action) -- Doesn't need the cookie
-
-
+    cookie <- B.pack . toString <$> nextRandom
+    bracket_
+        (lock_action cookie)
+        (I.unlock pool oid name cookie)
+        user_action
