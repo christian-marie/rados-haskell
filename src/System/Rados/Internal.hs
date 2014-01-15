@@ -41,8 +41,7 @@ module System.Rados.Internal
     F.idempotent,
 ) where
 
-import System.Rados.Error (checkError, checkError', checkError_)
-import qualified System.Rados.Error as E
+import System.Rados.Error
 import qualified System.Rados.FFI as F
 
 import Control.Applicative
@@ -230,7 +229,7 @@ isSafe (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
 
-getAsyncError :: Completion -> IO (Maybe E.RadosError)
+getAsyncError :: Completion -> IO (Maybe RadosError)
 getAsyncError (Completion rados_completion_t_ptr) = do
     result <- checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
     return $ either Just (const Nothing) result
@@ -257,7 +256,7 @@ asyncWrite
     -> B.ByteString
     -> Word64
     -> B.ByteString
-    -> IO (Either E.RadosError Int)
+    -> IO (Either RadosError Int)
 asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
            oid offset bs =
     B.useAsCString oid   $ \c_oid ->
@@ -276,11 +275,11 @@ asyncWriteFull
     -> Completion
     -> B.ByteString
     -> B.ByteString
-    -> IO (Either E.RadosError Int)
+    -> IO (Either RadosError Int)
 asyncWriteFull (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
-        E.checkError' "rados_aio_write_full" $
+        checkError' "rados_aio_write_full" $
             F.c_rados_aio_write_full
                 ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
@@ -294,7 +293,7 @@ asyncAppend
     -> Completion
     -> B.ByteString
     -> B.ByteString
-    -> IO (Either E.RadosError Int)
+    -> IO (Either RadosError Int)
 asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
     B.useAsCString oid        $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
@@ -422,7 +421,7 @@ exclusiveLock (Pool ioctx_ptr) oid name cookie desc maybe_duration flags =
         B.useAsCString desc   $ \c_desc ->
         case maybe_duration of
             Nothing -> 
-                checkError_ "c_rados_lock_exclusive" $
+                checkErrorRetryBusy_ "c_rados_lock_exclusive" $
                     F.c_rados_lock_exclusive ioctx_ptr
                                             c_oid
                                             c_name
@@ -433,7 +432,7 @@ exclusiveLock (Pool ioctx_ptr) oid name cookie desc maybe_duration flags =
             Just duration ->
                 alloca $ \timeval_ptr -> do
                     poke timeval_ptr duration
-                    checkError_ "c_rados_lock_exclusive" $
+                    checkErrorRetryBusy_ "c_rados_lock_exclusive" $
                         F.c_rados_lock_exclusive ioctx_ptr
                                                  c_oid
                                                  c_name
@@ -463,7 +462,7 @@ sharedLock (Pool ioctx_ptr) oid name cookie tag desc maybe_duration flags =
         B.useAsCString desc   $ \c_desc ->
         case maybe_duration of
             Nothing -> 
-                checkError_ "c_rados_lock_shared" $
+                checkErrorRetryBusy_ "c_rados_lock_shared" $
                     F.c_rados_lock_shared ioctx_ptr
                                             c_oid
                                             c_name
@@ -475,7 +474,7 @@ sharedLock (Pool ioctx_ptr) oid name cookie tag desc maybe_duration flags =
             Just duration ->
                 alloca $ \timeval_ptr -> do
                     poke timeval_ptr duration
-                    checkError_ "c_rados_lock_shared" $
+                    checkErrorRetryBusy_ "c_rados_lock_shared" $
                         F.c_rados_lock_shared ioctx_ptr
                                                  c_oid
                                                  c_name

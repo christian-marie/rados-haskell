@@ -6,6 +6,7 @@ module System.Rados.Error
     checkError,
     checkError',
     checkError_,
+    checkErrorRetryBusy_,
 ) where
 
 import Control.Exception
@@ -51,4 +52,15 @@ checkError' function action = do
         else return $ Right $ fromIntegral n
 
 checkError_ :: String -> IO CInt -> IO ()
-checkError_ desc action = void $ checkError desc action
+checkError_ function action = void $ checkError function action
+
+-- Retry if EBUSY
+checkErrorRetryBusy_ :: String -> IO CInt -> IO ()
+checkErrorRetryBusy_ function action = do
+    result <- checkError' function action
+    case result of
+        Left rados_error ->
+            if errno rados_error == 16
+            then checkErrorRetryBusy_ function action
+            else throwIO rados_error
+        Right _ -> return ()

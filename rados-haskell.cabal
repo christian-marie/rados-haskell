@@ -54,8 +54,7 @@ benchmark locking
   build-depends:       base >=4.6 && <4.7,
                        bytestring,
                        criterion,
-                       deepseq,
-                       parallel,
+                       async,
                        rados-haskell
 
   ghc-options:

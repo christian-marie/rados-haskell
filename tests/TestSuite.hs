@@ -81,5 +81,5 @@ testLockWithoutOID =
     it "locks and unlocks quickly" $
         withTestPool $ \pool -> do
             replicateM_ 100 $ 
-                withExclusiveLock pool "locked" "name" "desc" Nothing $
+                withExclusiveLock pool "locked" "name" "desc" (Just 1) $
                     assertBool "Failed" True

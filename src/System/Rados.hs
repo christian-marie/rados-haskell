@@ -244,9 +244,11 @@ withLock
     -> (B.ByteString -> IO a)
     -> IO b
 withLock pool oid name user_action lock_action = do
-    cookie <- B.pack . toString <$> nextRandom
-    lock_action cookie
-    result <- user_action
-    I.unlock pool oid name cookie
-    return result
+    bracket
+        (do cookie <- B.pack . toString <$> nextRandom
+            lock_action cookie
+            return cookie)
+        (I.unlock pool oid name)
+        (\_ -> user_action) -- Doesn't need the cookie
+
 
