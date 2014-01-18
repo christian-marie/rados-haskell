@@ -23,6 +23,7 @@ module System.Rados.Internal
     syncRead,
     syncAppend,
     syncRemove,
+    syncStat,
 -- **Asynchronous
     newCompletion,
     cleanupCompletion,
@@ -32,7 +33,9 @@ module System.Rados.Internal
     isComplete,
     asyncWrite,
     asyncWriteFull,
+    asyncRead,
     asyncAppend,
+    asyncRemove,
     getAsyncError,
 -- **Locking
     exclusiveLock,
@@ -45,11 +48,13 @@ import System.Rados.Error
 import qualified System.Rados.FFI as F
 
 import Control.Applicative
-import Control.Monad (void)
+import Control.Monad(void)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Unsafe as B
 import Foreign hiding (Pool, newPool, void)
 import Foreign.C.String
 import Foreign.C.Types
+import System.Posix.Types(EpochTime)
 
 -- | A connection to a rados cluster, required to get a 'Pool'
 newtype Connection = Connection (Ptr F.RadosT)
@@ -57,6 +62,7 @@ newtype Connection = Connection (Ptr F.RadosT)
 newtype Pool     = Pool (Ptr F.RadosIOCtxT)
 -- | A handle to query the status of an asynchronous action
 newtype Completion    = Completion (Ptr F.RadosCompletionT)
+    deriving (Ord, Eq)
 
 -- |
 -- Attempt to create a new 'Connection, taking an optional id.
@@ -229,11 +235,28 @@ isSafe (Completion rados_completion_t_ptr) =
     (/= 0) <$> F.c_rados_aio_is_safe rados_completion_t_ptr
 
 
-getAsyncError :: Completion -> IO (Maybe RadosError)
+getAsyncError :: Completion -> IO (Either RadosError Int)
 getAsyncError (Completion rados_completion_t_ptr) = do
-    result <- checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
-    return $ either Just (const Nothing) result
+    checkError' "rados_aio_get_return_value" $ F.c_rados_aio_get_return_value rados_completion_t_ptr
 
+asyncRead :: Pool
+          -> Completion
+          -> B.ByteString
+          -> Word64
+          -> Word64
+          -> IO (Either RadosError B.ByteString)
+asyncRead (Pool ioctx_ptr) (Completion rados_completion_t_ptr) oid len offset = do
+    c_buf <- mallocBytes (fromIntegral len)
+    B.useAsCString oid $ \c_oid -> do
+        let c_len    = fromIntegral len
+        let c_offset = fromIntegral offset
+        result <- checkError' "rados_aio_read" $ F.c_rados_aio_read
+            ioctx_ptr c_oid rados_completion_t_ptr c_buf c_len c_offset
+        case result of
+            Right read_bytes ->
+                Right <$> B.unsafePackCStringLen (c_buf, read_bytes)
+            Left e ->
+                return . Left $ e
 
 -- |
 -- From right to left, this function reads as:
@@ -261,7 +284,7 @@ asyncWrite (Pool ioctxt_ptr) (Completion rados_completion_t_ptr)
            oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        let c_offset = CULLong offset
+        let c_offset = fromIntegral offset
         checkError' "rados_aio_write" $ F.c_rados_aio_write
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size c_offset
 -- |
@@ -301,6 +324,22 @@ asyncAppend (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid bs =
             ioctxt_ptr c_oid rados_completion_t_ptr c_buf c_size
 
 -- |
+-- Same calling convention as asyncWriteFull, simply appends to an object.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
+asyncRemove
+    :: Pool
+    -> Completion
+    -> B.ByteString
+    -> IO (Either RadosError Int)
+asyncRemove (Pool ioctxt_ptr) (Completion rados_completion_t_ptr) oid =
+    B.useAsCString oid $ \c_oid ->
+        checkError' "rados_aio_append" $ F.c_rados_aio_remove
+            ioctxt_ptr c_oid rados_completion_t_ptr
+
+
+-- |
 -- Write a 'ByteString' to 'Pool', object id and offset.
 --
 -- @
@@ -316,7 +355,7 @@ syncWrite
 syncWrite (Pool ioctxt_ptr) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
-        let c_offset = CULLong offset
+        let c_offset = fromIntegral offset
         checkError_ "rados_write" $ F.c_rados_write
             ioctxt_ptr c_oid c_buf c_size c_offset
 
@@ -373,15 +412,19 @@ syncRead
     -> B.ByteString
     -> Word64
     -> Word64
-    -> IO B.ByteString
-syncRead (Pool ioctxt_ptr) oid offset len =
-    allocaBytes (fromIntegral len) $ \c_buf ->
+    -> IO (Either RadosError B.ByteString)
+syncRead (Pool ioctxt_ptr) oid offset len = do
+    c_buf <- mallocBytes (fromIntegral len)
     B.useAsCString oid             $ \c_oid -> do
-        let c_offset = CULLong offset
-        let c_len    = CSize  len
-        read_bytes <- checkError "rados_read" $ F.c_rados_read
+        let c_offset = fromIntegral offset
+        let c_len    = fromIntegral len
+        result <- checkError' "rados_read" $ F.c_rados_read
             ioctxt_ptr c_oid c_buf c_len c_offset
-        B.packCStringLen (c_buf, read_bytes)
+        case result of
+            Right read_bytes ->
+                Right <$> B.unsafePackCStringLen (c_buf, read_bytes)
+            Left e ->
+                return . Left $ e
 
 useAsCStringCSize :: B.ByteString -> ((CString, CSize) -> IO a) -> IO a
 useAsCStringCSize bs f =
@@ -390,15 +433,25 @@ useAsCStringCSize bs f =
 -- |
 -- Delete an object from 'Pool' by ID.
 --
-syncRemove
-    :: Pool
-    -> B.ByteString
-    -> IO ()
+syncRemove :: Pool -> B.ByteString -> IO ()
 syncRemove (Pool ioctxt_ptr) oid =
-    B.useAsCString oid   $ \c_oid ->
+    B.useAsCString oid $ \c_oid ->
         checkError_ "rados_remove" $ F.c_rados_remove
             ioctxt_ptr c_oid
 
+syncStat :: Pool -> B.ByteString -> IO (Either RadosError (Word64, EpochTime))
+syncStat (Pool ioctxt_ptr) oid =
+    B.useAsCString oid $ \c_oid ->
+    alloca $ \size_ptr ->
+    alloca $ \time_ptr -> do
+        result <- checkError' "rados_stat" $ F.c_rados_stat
+            ioctxt_ptr c_oid size_ptr time_ptr
+        case result of
+            Left e -> return $ Left e
+            Right _ -> do
+                Right <$> liftA2 (,) (peek size_ptr) (peek time_ptr)
+
+    
 combineLockFlags :: [F.LockFlag] -> F.LockFlag
 combineLockFlags = F.LockFlag . foldr ((.|.) . F.unLockFlag) 0
 

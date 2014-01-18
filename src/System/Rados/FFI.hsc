@@ -22,13 +22,16 @@ module System.Rados.FFI
     c_rados_aio_is_complete,
     c_rados_aio_is_safe,
     c_rados_aio_get_return_value,
+    c_rados_aio_read,
     c_rados_aio_write,
     c_rados_aio_write_full,
     c_rados_aio_append,
+    c_rados_aio_remove,
     c_rados_write,
     c_rados_write_full,
     c_rados_append,
     c_rados_read,
+    c_rados_stat,
     c_rados_remove,
     c_rados_lock_exclusive,
     c_rados_unlock,
@@ -144,6 +147,16 @@ foreign import ccall unsafe "librados.h rados_aio_is_safe"
 foreign import ccall unsafe "librados.h rados_aio_get_return_value"
     c_rados_aio_get_return_value :: Ptr RadosCompletionT -> IO CInt
 
+foreign import ccall unsafe "librados.h rados_aio_read"
+    c_rados_aio_read
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> CString
+        -> CSize
+        -> Word64
+        -> IO CInt
+
 foreign import ccall unsafe "librados.h rados_aio_write"
     c_rados_aio_write
         :: Ptr RadosIOCtxT
@@ -151,7 +164,7 @@ foreign import ccall unsafe "librados.h rados_aio_write"
         -> Ptr RadosCompletionT
         -> CString
         -> CSize
-        -> CULLong
+        -> Word64
         -> IO CInt
 
 
@@ -174,12 +187,19 @@ foreign import ccall unsafe "librados.h rados_aio_append"
         -> CSize
         -> IO CInt
 
+foreign import ccall unsafe "librados.h rados_aio_remove"
+    c_rados_aio_remove
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> IO CInt
+
 foreign import ccall unsafe "librados.h rados_write"
     c_rados_write :: Ptr RadosIOCtxT
         -> CString
         -> CString
         -> CSize
-        -> CULLong
+        -> Word64
         -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_write_full"
@@ -204,13 +224,21 @@ foreign import ccall unsafe "librados.h rados_read"
         -> CString
         -> CString
         -> CSize
-        -> CULLong
+        -> Word64
         -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_remove"
     c_rados_remove
         :: Ptr RadosIOCtxT
         -> CString
+        -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_stat"
+    c_rados_stat
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr Word64
+        -> Ptr CTime
         -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_lock_exclusive"

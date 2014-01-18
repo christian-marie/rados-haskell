@@ -19,15 +19,30 @@ import System.Rados.FFI as F
 
 -- | An error indicated by librados, usually in the form of a negative return
 -- value
-data RadosError = RadosError
-    { errno     :: Int    -- ^ Error number (positive)
-    , cFunction :: String -- ^ The underlying C function that called
-    , strerror  :: String -- ^ The \"nice\" error message from @strerror@
-    } deriving (Eq, Ord, Typeable)
+data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
+                | NoEntity { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
+                | Exists   { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
+                | Canceled { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
+    deriving (Eq, Ord, Typeable)
 
 instance Show RadosError where
-    show RadosError{..} = "rados-haskell: rados error in '" ++
+    show Unknown{..} = "rados: unknown rados error in '" ++
         cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
+    show NoEntity{..} = "rados: ENOENT: '" ++ strerror ++ "'"
+    show Exists{..} = "rados: EEXIST: '" ++ strerror ++ "'"
+    show Canceled{..} = "rados: ECANCELED: '" ++ strerror ++ "'"
 
 instance Exception RadosError
 
@@ -48,8 +63,14 @@ checkError' function action = do
         then do
             let errno = (-n)
             strerror <- peekCString =<< F.c_strerror (Errno errno)
-            return $ Left $ RadosError (fromIntegral errno) function strerror
-        else return $ Right $ fromIntegral n
+            return . Left $ makeError (fromIntegral errno) function strerror
+        else return . Right $ fromIntegral n
+
+makeError :: Int -> String -> String -> RadosError
+makeError 125 fun str = Canceled 125 fun str
+makeError 2 fun str   = NoEntity 2 fun str
+makeError 17 fun str  = Exists 17 fun str
+makeError n fun str   = Unknown n fun str
 
 checkError_ :: String -> IO CInt -> IO ()
 checkError_ function action = void $ checkError function action
