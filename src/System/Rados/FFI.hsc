@@ -12,6 +12,8 @@ module System.Rados.FFI
     c_rados_create,
     c_rados_shutdown,
     c_rados_conf_read_file,
+    c_rados_conf_parse_argv,
+    c_rados_conf_parse_env,
     c_rados_connect,
     c_rados_ioctx_create,
     c_rados_ioctx_destroy,
@@ -19,8 +21,6 @@ module System.Rados.FFI
     c_rados_aio_release,
     c_rados_aio_wait_for_complete,
     c_rados_aio_wait_for_safe,
-    c_rados_aio_is_complete,
-    c_rados_aio_is_safe,
     c_rados_aio_get_return_value,
     c_rados_aio_read,
     c_rados_aio_write,
@@ -37,6 +37,7 @@ module System.Rados.FFI
     c_rados_unlock,
     c_rados_lock_shared,
     c_strerror,
+    c_getProgArgv,
 )
 where
 
@@ -94,16 +95,33 @@ instance Storable TimeVal where
         #{poke timeval_typedef, tv_usec} p usec
 
 foreign import ccall unsafe "librados.h rados_create"
-    c_rados_create :: Ptr (Ptr RadosT) -> CString -> IO CInt
+    c_rados_create :: Ptr (Ptr RadosT)
+                   -> CString
+                   -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_shutdown"
-    c_rados_shutdown :: Ptr RadosT -> IO ()
+    c_rados_shutdown :: Ptr RadosT
+                     -> IO ()
 
 foreign import ccall unsafe "librados.h rados_conf_read_file"
-    c_rados_conf_read_file :: Ptr RadosT -> CString -> IO CInt
+    c_rados_conf_read_file :: Ptr RadosT
+                            -> CString
+                            -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_conf_parse_argv"
+    c_rados_conf_parse_argv :: Ptr RadosT
+                            -> CInt
+                            -> Ptr CString
+                            -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_conf_parse_env"
+    c_rados_conf_parse_env :: Ptr RadosT
+                           -> CString
+                           -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_connect"
-    c_rados_connect :: Ptr RadosT -> IO CInt
+    c_rados_connect :: Ptr RadosT
+                    -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_ioctx_create"
     c_rados_ioctx_create
@@ -115,9 +133,6 @@ foreign import ccall unsafe "librados.h rados_ioctx_create"
 foreign import ccall unsafe "librados.h rados_ioctx_destroy"
     c_rados_ioctx_destroy :: Ptr RadosIOCtxT -> IO ()
 
-foreign import ccall unsafe "wrapper"
-    c_wrap_callback :: RadosCallback -> IO RadosCallbackT
-
 foreign import ccall unsafe "librados.h rados_aio_create_completion"
     c_rados_aio_create_completion
         :: Ptr ()
@@ -126,8 +141,8 @@ foreign import ccall unsafe "librados.h rados_aio_create_completion"
         -> Ptr (Ptr RadosCompletionT)
         -> IO CInt
 
-foreign import ccall unsafe "librados.h rados_aio_release"
-    c_rados_aio_release :: Ptr RadosCompletionT -> IO ()
+foreign import ccall unsafe "librados.h &rados_aio_release"
+    c_rados_aio_release :: FunPtr (Ptr RadosCompletionT -> IO ())
 
 foreign import ccall unsafe "string.h strerror"
     c_strerror :: Errno -> IO (Ptr CChar)
@@ -137,12 +152,6 @@ foreign import ccall unsafe "librados.h rados_aio_wait_for_complete"
 
 foreign import ccall unsafe "librados.h rados_aio_wait_for_safe"
     c_rados_aio_wait_for_safe :: Ptr RadosCompletionT -> IO CInt
-
-foreign import ccall unsafe "librados.h rados_aio_is_complete"
-    c_rados_aio_is_complete :: Ptr RadosCompletionT -> IO CInt
-
-foreign import ccall unsafe "librados.h rados_aio_is_safe"
-    c_rados_aio_is_safe :: Ptr RadosCompletionT -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_aio_get_return_value"
     c_rados_aio_get_return_value :: Ptr RadosCompletionT -> IO CInt
@@ -271,3 +280,9 @@ foreign import ccall unsafe "librados.h rados_lock_shared"
         -> Ptr TimeVal
         -> LockFlag
         -> IO CInt
+
+foreign import ccall unsafe "getProgArgv"
+    c_getProgArgv
+        :: Ptr CInt
+        -> Ptr (Ptr CString)
+        -> IO ()

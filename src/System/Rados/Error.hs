@@ -6,6 +6,7 @@ module System.Rados.Error
     checkError,
     checkError',
     checkError_,
+    maybeError,
     checkErrorRetryBusy_,
 ) where
 
@@ -35,14 +36,19 @@ data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
                            , cFunction :: String -- ^ The underlying C function
                            , strerror  :: String -- ^ The \"nice\" error message.
                            }
+                | Range    { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
     deriving (Eq, Ord, Typeable)
 
 instance Show RadosError where
     show Unknown{..} = "rados: unknown rados error in '" ++
         cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
-    show NoEntity{..} = "rados: ENOENT: '" ++ strerror ++ "'"
-    show Exists{..} = "rados: EEXIST: '" ++ strerror ++ "'"
-    show Canceled{..} = "rados: ECANCELED: '" ++ strerror ++ "'"
+    show NoEntity{..} = cFunction ++ ": ENOENT: '" ++ strerror ++ "'"
+    show Exists{..} = cFunction ++ ": EEXIST: '" ++ strerror ++ "'"
+    show Canceled{..} = cFunction ++ ": ECANCELED: '" ++ strerror ++ "'"
+    show Range{..} = cFunction ++ ": ERANGE: '" ++ strerror ++ "'"
 
 instance Exception RadosError
 
@@ -66,10 +72,15 @@ checkError' function action = do
             return . Left $ makeError (fromIntegral errno) function strerror
         else return . Right $ fromIntegral n
 
+maybeError :: String -> IO CInt -> IO (Maybe RadosError)
+maybeError function action =
+    checkError' function action >>= either (return . Just) (const $ return Nothing)
+
 makeError :: Int -> String -> String -> RadosError
 makeError 125 fun str = Canceled 125 fun str
 makeError 2 fun str   = NoEntity 2 fun str
 makeError 17 fun str  = Exists 17 fun str
+makeError 34 fun str  = Range 34 fun str
 makeError n fun str   = Unknown n fun str
 
 checkError_ :: String -> IO CInt -> IO ()

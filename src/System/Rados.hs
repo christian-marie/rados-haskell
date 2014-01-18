@@ -3,9 +3,9 @@
 module System.Rados
 (
     -- *Types
-    I.Connection,
-    I.Pool,
-    I.TimeVal(..),
+    Connection,
+    Pool,
+    Object,
     -- *Exceptions
     -- |
     -- This library should only ever throw a 'RadosError'.
@@ -14,7 +14,7 @@ module System.Rados
     --
     -- @
     -- main = tryHai \`catch\` (\\e -> putStrLn $ strerror e )
-    --   where tryHai = withConnection Nothing (readConfig \"/dev/null\")
+    --   where tryHai = runConnect Nothing (parseConfig \"/dev/null\")
     --                                         (\\_ -> putStrLn \"hai\")
     -- @
     E.RadosError(..),
@@ -26,14 +26,14 @@ module System.Rados
     -- @
     -- writeRead :: IO ByteString
     -- writeRead =
-    --     withConnection Nothing (readConfig \"ceph.conf\") $
-    --         withPool connection \"magic_pool\" $
-    --             withObject "oid" $
+    --     runConnect Nothing (parseConfig \"ceph.conf\") $
+    --         runPool connection \"magic_pool\" $
+    --             runObject "oid" $
     --                 writeFull \"hai!\"
     -- @
-    withConnection,
-    withPool,
-    withObject,
+    runConnect,
+    runPool,
+    runObject,
     -- *Syncronous IO
     writeChunk,
     writeFull,
@@ -53,7 +53,9 @@ module System.Rados
     waitSafe,
     look,
     -- *Configuration
-    readConfig,
+    parseConfig,
+    parseArgv,
+    parseEnv,
     -- *Locking
     withExclusiveLock,
     withIdempotentExclusiveLock,
@@ -63,7 +65,7 @@ module System.Rados
 )
 where
 
-import Control.Exception (bracket, bracket_)
+import Control.Exception (bracket, bracket_, throwIO)
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Applicative
@@ -78,13 +80,13 @@ import Data.UUID
 import Data.UUID.V4
 
 
-newtype ConnectionReader a = ConnectionReader (ReaderT I.Connection IO a)
+newtype Connection a = Connection (ReaderT I.Connection IO a)
     deriving (Monad, MonadIO, MonadReader I.Connection)
 
-newtype PoolStateReader a = PoolStateReader (ReaderT I.Pool (StateT Completions IO) a)
+newtype Pool a = Pool (ReaderT I.Pool (StateT Completions IO) a)
     deriving (Functor, Monad, MonadIO, MonadState Completions,  MonadReader I.Pool)
 
-newtype ObjectReader a = ObjectReader (ReaderT B.ByteString PoolStateReader a)
+newtype Object a = Object (ReaderT B.ByteString Pool a)
     deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
 
 data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
@@ -92,26 +94,26 @@ data AsyncRead = ReadFailure E.RadosError | ReadInFlight I.Completion B.ByteStri
 
 type Completions = Map.Map I.Completion ()
 
-askObjectPool :: ObjectReader (B.ByteString, I.Pool) 
+askObjectPool :: Object (B.ByteString, I.Pool) 
 askObjectPool = do
-    liftM2 (,) ask (ObjectReader . lift $ ask)
+    liftM2 (,) ask (Object . lift $ ask)
 
-writeChunk :: Word64 -> B.ByteString -> ObjectReader ()
+writeChunk :: Word64 -> B.ByteString -> Object ()
 writeChunk offset buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncWrite pool object offset buffer
 
-writeFull :: B.ByteString -> ObjectReader ()
+writeFull :: B.ByteString -> Object ()
 writeFull buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncWriteFull pool object buffer
 
-readChunk :: Word64 -> Word64 -> ObjectReader (Either E.RadosError B.ByteString)
+readChunk :: Word64 -> Word64 -> Object (Either E.RadosError B.ByteString)
 readChunk len offset = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncRead pool object len offset
 
-readFull :: ObjectReader (Either E.RadosError B.ByteString)
+readFull :: Object (Either E.RadosError B.ByteString)
 readFull = do
     result <- stat
     case result of
@@ -119,46 +121,46 @@ readFull = do
         Right (size, _) -> readChunk size 0
 
 
-append :: B.ByteString -> ObjectReader ()
+append :: B.ByteString -> Object ()
 append buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncAppend pool object buffer
 
-stat :: ObjectReader (Either E.RadosError (Word64, EpochTime))
+stat :: Object (Either E.RadosError (Word64, EpochTime))
 stat = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncStat pool object
 
-remove :: ObjectReader ()
+remove :: Object ()
 remove = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncRemove pool object
 
-asyncWriteChunk :: Word64 -> B.ByteString -> ObjectReader AsyncAction
+asyncWriteChunk :: Word64 -> B.ByteString -> Object AsyncAction
 asyncWriteChunk offset buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWrite pool completion object offset buffer
 
-asyncWriteFull :: B.ByteString -> ObjectReader AsyncAction
+asyncWriteFull :: B.ByteString -> Object AsyncAction
 asyncWriteFull buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWriteFull pool completion object buffer
 
-asyncReadChunk :: Word64 -> Word64 -> ObjectReader AsyncRead
+asyncReadChunk :: Word64 -> Word64 -> Object AsyncRead
 asyncReadChunk len offset = do
     (object, pool) <- askObjectPool
     withReadCompletion $ \completion -> 
         liftIO $ I.asyncRead pool completion object len offset
 
-asyncAppend :: B.ByteString -> ObjectReader AsyncAction
+asyncAppend :: B.ByteString -> Object AsyncAction
 asyncAppend buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncAppend pool completion object buffer
 
-asyncRemove :: ObjectReader AsyncAction
+asyncRemove :: Object AsyncAction
 asyncRemove = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
@@ -193,15 +195,15 @@ class CompletionsState m where
     deleteCompletion :: I.Completion -> m ()
     deleteCompletion c = modifyCompletions (\cs -> Map.delete c cs)
 
-instance CompletionsState PoolStateReader where
+instance CompletionsState Pool where
     modifyCompletions = modify
 
-instance CompletionsState ObjectReader where
-    modifyCompletions f = ObjectReader . lift $ modify f
+instance CompletionsState Object where
+    modifyCompletions f = Object . lift $ modify f
     
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> ObjectReader (AsyncAction)
+withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object (AsyncAction)
 withActionCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
@@ -213,7 +215,7 @@ withActionCompletion f = do
     
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withReadCompletion :: (I.Completion -> IO (Either E.RadosError B.ByteString)) -> ObjectReader (AsyncRead)
+withReadCompletion :: (I.Completion -> IO (Either E.RadosError B.ByteString)) -> Object (AsyncRead)
 withReadCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
@@ -225,9 +227,9 @@ withReadCompletion f = do
 
 test :: IO ()
 test = do
-    withConnection Nothing (readConfig "ceph.conf") $ do
-        withPool "pool" $ do
-            s <- withObject "hai" stat
+    runConnect Nothing (parseConfig "ceph.conf") $ do
+        runPool "pool" $ do
+            s <- runObject "hai" stat
             liftIO $ print s
 
 -- |
@@ -240,21 +242,27 @@ test = do
 -- Third argument is the action to run with the connection made.
 --
 -- @
--- withConnection (readConfig \"ceph.conf\") $ do
+-- runConnect (parseConfig \"ceph.conf\") $ do
 --     ...
 -- @
-withConnection
+runConnect
     :: Maybe B.ByteString
-    -> ConnectionReader () -- configure action
-    -> ConnectionReader a -- user action
+    -> (I.Connection -> IO (Maybe E.RadosError))
+    -> Connection a -- user action
     -> IO a
-withConnection user (ConnectionReader configure) (ConnectionReader action) = do
+runConnect user configure (Connection action) = do
     bracket
         (do h <- I.newConnection user
-            I.connect h
-            return h)
+            conf <- configure h
+            case conf of
+                Just e -> do
+                    I.cleanupConnection h
+                    throwIO e
+                Nothing -> do
+                    I.connect h
+                    return h)
         I.cleanupConnection
-        (runReaderT (configure >> action))
+        (runReaderT action)
 
 -- |
 -- Open a 'Pool' with ceph and perform an action with it, cleaning up with
@@ -262,11 +270,11 @@ withConnection user (ConnectionReader configure) (ConnectionReader action) = do
 --
 -- @
 -- ...
---     withPool \"pool42\" $ do
+--     runPool \"pool42\" $ do
 --         ...
 -- @
-withPool :: B.ByteString -> PoolStateReader a -> ConnectionReader a
-withPool pool (PoolStateReader action) = do
+runPool :: B.ByteString -> Pool a -> Connection a
+runPool pool (Pool action) = do
     connection <- ask
     (result, completions) <- liftIO $ bracket
         (I.newPool connection pool)
@@ -277,19 +285,23 @@ withPool pool (PoolStateReader action) = do
     liftIO $ mapM_ I.cleanupCompletion (Map.keys completions)
     return result
 
-withObject :: B.ByteString -> ObjectReader a -> PoolStateReader a
-withObject object_id (ObjectReader action) = do
+runObject :: B.ByteString -> Object a -> Pool a
+runObject object_id (Object action) = do
     runReaderT action object_id
 
 
 --- |
 -- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
 --
--- Intended for use with 'withConnection'.
-readConfig :: FilePath -> ConnectionReader ()
-readConfig path = do
-    connection <- ask
-    liftIO $ I.confReadFile connection path
+-- Intended for use with 'runConnect'.
+parseConfig :: FilePath -> I.Connection -> IO (Maybe E.RadosError)
+parseConfig = flip I.confReadFile
+
+parseArgv :: I.Connection -> IO (Maybe E.RadosError)
+parseArgv = I.confParseArgv
+
+parseEnv :: I.Connection -> IO (Maybe E.RadosError)
+parseEnv = I.confParseEnv
 
 -- | Perform an action with an exclusive lock on oid
 withExclusiveLock, withIdempotentExclusiveLock
