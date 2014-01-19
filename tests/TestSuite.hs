@@ -88,9 +88,9 @@ testDeleteObject =
 testPutObjectAsync =
     it "write object accepted by storage cluster" $ do
         runTestPool . runAsync $ runObject "test/TestSuite.hs" $ do
-            wr <- asyncWriteFull "schrodinger's hai?\n"
+            wr <- writeFull "schrodinger's hai?\n"
             waitSafe wr
-            wr' <- asyncWriteChunk 14 "cat"
+            wr' <- writeChunk 14 "cat"
             waitSafe wr'
         assertBool "Failed" True
 

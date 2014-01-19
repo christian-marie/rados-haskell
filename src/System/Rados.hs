@@ -114,7 +114,7 @@ modifyTime :: StatResult -> EpochTime
 modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
-class Monad m => RadosWriter m error_wrapper where
+class Monad m => RadosWriter m error_wrapper | m -> error_wrapper where
     writeChunk :: Word64 -> B.ByteString ->  m error_wrapper
     writeFull :: B.ByteString -> m error_wrapper
     append :: B.ByteString -> m error_wrapper
