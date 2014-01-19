@@ -7,29 +7,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 module System.Rados
 (
-    -- *Types
-    -- **Monads
-    Connection,
-    Pool,
-    Object,
-    -- **Data types
-    StatResult,
-    fileSize,
-    modifyTime,
-    -- *Exceptions
-    -- |
-    -- This library should only ever throw a 'RadosError'.
-    --
-    -- You can handle this with something like:
-    --
-    -- @
-    -- main = tryHai \`catch\` (\\e -> putStrLn $ strerror e )
-    --   where tryHai = runConnect Nothing (parseConfig \"/dev/null\")
-    --                                         (\\_ -> putStrLn \"hai\")
-    -- @
-    E.RadosError(..),
     -- *General usage
     -- |
+    -- ** Quick example
     -- There are a series of convenience monads to avoid you having to carry
     -- around state yourself:
     --
@@ -38,9 +18,17 @@ module System.Rados
     -- writeRead =
     --     runConnect Nothing (parseConfig \"ceph.conf\") $
     --         runPool connection \"magic_pool\" $
-    --             runObject "oid" $
+    --             runObject \"oid\" $
     --                 writeFull \"hai!\"
     -- @
+    --
+    -- ** Reading signatures
+    -- #signatures#
+    -- In order to have the same reading and writing API presented to you
+    -- within 'Async', 'Pool' and 'Atomic' monads, the return value of many
+    -- functions has been generalized.
+    --
+    -- TODO: Document further once Atomic writes is done
     runConnect,
     runPool,
     runAsync,
@@ -66,6 +54,23 @@ module System.Rados
     -- *Locking
     withExclusiveLock,
     withSharedLock,
+    -- *Types
+    -- **Monads
+    Connection,
+    Pool,
+    Object,
+    Async,
+    -- **Data types
+    StatResult,
+    fileSize,
+    modifyTime,
+    -- *Exceptions
+    -- |
+    -- This library should never throw an error within runPool, runPool itself
+    -- may throw a 'RadosError' should it have a problem opening the given
+    -- pool. Any exception thrown within runPool will be thrown all the way out
+    -- to 'IO'.
+    E.RadosError(..),
 )
 where
 
@@ -114,11 +119,24 @@ modifyTime :: StatResult -> EpochTime
 modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
-class Monad m => RadosWriter m error_wrapper | m -> error_wrapper where
-    writeChunk :: Word64 -> B.ByteString ->  m error_wrapper
-    writeFull :: B.ByteString -> m error_wrapper
-    append :: B.ByteString -> m error_wrapper
-    remove :: m error_wrapper
+class Monad m => RadosWriter m e | m -> e where
+    writeChunk
+        :: Word64          -- ^ Offset
+        -> B.ByteString    -- ^ Data to write
+        -> m e             -- ^ Possible error, see: "System.Rados#signatures"
+    writeFull :: B.ByteString -> m e
+    append :: B.ByteString -> m e
+    remove :: m e
+
+class Monad m => RadosReader m wrapper | m -> wrapper where
+    readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
+    readFull :: m (wrapper B.ByteString)
+    readFull =
+        stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
+
+    stat :: m (wrapper StatResult)
+    unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
+    wrapFail :: E.RadosError -> m (wrapper a)
 
 instance RadosWriter (Object Pool) (Maybe E.RadosError) where
     writeChunk offset buffer = do
@@ -157,17 +175,6 @@ instance RadosWriter (Object Async) (AsyncAction) where
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
             liftIO $ I.asyncRemove pool completion object
-
-
-class Monad m => RadosReader m wrapper | m -> wrapper where
-    readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
-    readFull :: m (wrapper B.ByteString)
-    readFull =
-        stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
-
-    stat :: m (wrapper StatResult)
-    unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
-    wrapFail :: E.RadosError -> m (wrapper a)
 
 instance RadosReader (Object Pool) (Either E.RadosError) where
     readChunk len offset = do

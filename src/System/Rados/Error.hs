@@ -24,21 +24,26 @@ data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
                            , cFunction :: String -- ^ The underlying C function
                            , strerror  :: String -- ^ The \"nice\" error message.
                            }
-                | NoEntity { errno     :: Int    -- ^ Error number (positive)
-                           , cFunction :: String -- ^ The underlying C function
-                           , strerror  :: String -- ^ The \"nice\" error message.
+                -- | Usually returned if a file does not exist
+                | NoEntity { errno     :: Int    
+                           , cFunction :: String 
+                           , strerror  :: String
                            }
-                | Exists   { errno     :: Int    -- ^ Error number (positive)
-                           , cFunction :: String -- ^ The underlying C function
-                           , strerror  :: String -- ^ The \"nice\" error message.
+                -- | Returned if a file already exists, and should not.
+                | Exists   { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
                            }
-                | Canceled { errno     :: Int    -- ^ Error number (positive)
-                           , cFunction :: String -- ^ The underlying C function
-                           , strerror  :: String -- ^ The \"nice\" error message.
+                -- | Returned in the event of a failed atomic transaction
+                | Canceled { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
                            }
-                | Range    { errno     :: Int    -- ^ Error number (positive)
-                           , cFunction :: String -- ^ The underlying C function
-                           , strerror  :: String -- ^ The \"nice\" error message.
+                -- | A value was out of range, returned when reading or writing
+                -- from/to invalid regions.
+                | Range    { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
                            }
     deriving (Eq, Ord, Typeable)
 
