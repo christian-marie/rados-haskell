@@ -59,7 +59,6 @@ module System.Rados
     -- *Locking
     withExclusiveLock,
     withSharedLock,
-    test
 )
 where
 
@@ -207,13 +206,6 @@ withReadCompletion f = do
         Right bs -> do
             return $ ReadInFlight completion bs
 
-test :: IO ()
-test = do
-    runConnect Nothing (parseConfig "ceph.conf") $ do
-        runPool "pool" $ do
-            s <- runObject "hai" stat
-            liftIO $ print s
-
 -- |
 -- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
 --
@@ -230,7 +222,7 @@ test = do
 runConnect
     :: Maybe B.ByteString
     -> (I.Connection -> IO (Maybe E.RadosError))
-    -> Connection a -- user action
+    -> Connection a
     -> IO a
 runConnect user configure (Connection action) = do
     bracket
@@ -315,6 +307,9 @@ withLock
 withLock oid name (Pool user_action) lock_action = do
     pool <- ask
     cookie <- liftIO $ B.pack . toString <$> nextRandom
+    -- Re-wrap user's action in a sub-ReaderT that is identical, this way we
+    -- can just use bracket_ to ensure the lock is cleaned up even if they
+    -- generate an exception.
     liftIO $ bracket_
         (lock_action pool cookie)
         (I.unlock pool oid name cookie)

@@ -10,6 +10,7 @@
 --
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS -fno-warn-unused-imports #-}
 
 module TestSuite where
@@ -22,7 +23,7 @@ import Test.HUnit
 --
 
 import Control.Monad
-import Control.Exception (throwIO)
+import Control.Exception (throwIO, try, SomeException)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
@@ -47,7 +48,8 @@ suite = do
         testGetObjectAsync
     
     describe "Locking" $ do
-        testLockWithoutOID
+        testSharedLock
+        testExclusiveLock
 
 runTestPool :: Pool a -> IO a
 runTestPool a = 
@@ -55,7 +57,9 @@ runTestPool a =
             runPool "test1" a
 
 testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
-testLockWithoutOID :: Spec
+testGetObjectAsync, testPutObjectAsync, testSharedLock :: Spec
+testExclusiveLock :: Spec
+
 testConnectionHost =
     it "able to establish connetion to local Ceph cluster" $ do
         runTestPool $ return ()
@@ -97,6 +101,17 @@ testGetObjectAsync =
         --r' <- look `fmap` runTestPool $ runObject "test/TestSuite.hs" $ asyncReadFull
         --either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
 
-testLockWithoutOID =
+testSharedLock =
+    it "locks and unlocks quickly" $ do
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
+                error "Bang!"
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
+                error "Bang again!"
+        assertBool "No deadlock" True
+
+testExclusiveLock =
     it "locks and unlocks quickly" $
         assertBool "Failed" True
