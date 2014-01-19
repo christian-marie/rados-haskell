@@ -484,15 +484,20 @@ syncStat (Pool ioctxt_p) oid =
 combineLockFlags :: [F.LockFlag] -> F.LockFlag
 combineLockFlags = F.LockFlag . foldr ((.|.) . F.unLockFlag) 0
 
+timeValFromRealFrac :: RealFrac n => n -> F.TimeVal
+timeValFromRealFrac n = do
+    let (seconds, fractional) = properFraction n
+    F.TimeVal seconds (floor $ 1000000 / fractional)
 -- |
 -- Make an exclusive lock
 exclusiveLock
-    :: Pool
+    :: RealFrac duration
+    => Pool
     -> B.ByteString -- ^ oid
     -> B.ByteString -- ^ name
     -> B.ByteString -- ^ cookie
     -> B.ByteString -- ^ desc
-    -> Maybe F.TimeVal
+    -> Maybe duration
     -> [F.LockFlag]
     -> IO ()
 exclusiveLock (Pool ioctx_p) oid name cookie desc maybe_duration flags =
@@ -513,7 +518,8 @@ exclusiveLock (Pool ioctx_p) oid name cookie desc maybe_duration flags =
                                             flag
             Just duration ->
                 alloca $ \timeval_p -> do
-                    poke timeval_p duration
+                    let timeval = timeValFromRealFrac duration
+                    poke timeval_p timeval
                     checkErrorRetryBusy_ "c_rados_lock_exclusive" $
                         F.c_rados_lock_exclusive ioctx_p
                                                  c_oid
@@ -526,13 +532,14 @@ exclusiveLock (Pool ioctx_p) oid name cookie desc maybe_duration flags =
 -- |
 -- Make a shared lock
 sharedLock
-    :: Pool
+    :: RealFrac duration
+    => Pool
     -> B.ByteString -- ^ oid
     -> B.ByteString -- ^ name
     -> B.ByteString -- ^ cookie
     -> B.ByteString -- ^ tag
     -> B.ByteString -- ^ desc
-    -> Maybe F.TimeVal
+    -> Maybe duration
     -> [F.LockFlag]
     -> IO ()
 sharedLock (Pool ioctx_p) oid name cookie tag desc maybe_duration flags =
@@ -555,7 +562,8 @@ sharedLock (Pool ioctx_p) oid name cookie tag desc maybe_duration flags =
                                             flag
             Just duration ->
                 alloca $ \timeval_p -> do
-                    poke timeval_p duration
+                    let timeval = timeValFromRealFrac duration
+                    poke timeval_p timeval
                     checkErrorRetryBusy_ "c_rados_lock_shared" $
                         F.c_rados_lock_shared ioctx_p
                                                  c_oid

@@ -345,7 +345,7 @@ withExclusiveLock
     :: B.ByteString    -- ^ Object ID
     -> B.ByteString    -- ^ Name of lock
     -> B.ByteString    -- ^ Description of lock
-    -> Maybe I.TimeVal -- ^ Optional duration of lock
+    -> Maybe Double    -- ^ Optional duration of lock
     -> Pool a          -- ^ Action to perform with lock
     -> Pool a
 withExclusiveLock oid name desc duration action =
@@ -358,7 +358,7 @@ withSharedLock
     -> B.ByteString    -- ^ Name of lock
     -> B.ByteString    -- ^ Description of lock
     -> B.ByteString    -- ^ Tag for shared lock
-    -> Maybe I.TimeVal -- ^ Optional duration of lock
+    -> Maybe Double    -- ^ Optional duration of lock
     -> Pool a          -- ^ Action to perform with lock
     -> Pool a
 withSharedLock oid name desc tag duration action =

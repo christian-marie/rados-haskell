@@ -68,7 +68,7 @@ testConnectionHost =
 
 testPutObject =
     it "write object accepted by storage cluster" $ do
-        runTestPool $ runObject "test/TestSuite.hs" $ do
+        runTestPool . runObject "test/TestSuite.hs" $ do
             writeFull "schrodinger's hai?\n"
             writeChunk 14 "cat"
         assertBool "Failed" True
@@ -77,7 +77,7 @@ testGetObject =
     it "read object returns correct data" $ do
         a <- runTestPool $ runObject "test/TestSuite.hs" $ readChunk 32 0
         either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") a
-        (Right b) <- runTestPool $ runObject "test/TestSuite.hs" $ readFull
+        (Right b) <- runTestPool . runObject "test/TestSuite.hs" $ readFull
         assertEqual "Incorrect content readFull" "schrodinger's cat?\n" b
 
 testDeleteObject =
@@ -96,19 +96,19 @@ testPutObjectAsync =
 
 testGetObjectAsync =
     it "read object returns correct data" $ do
-        r <- runTestPool . runAsync $ runObject "test/TestSuite.hs" $ readChunk 32 0 >>= look
+        r <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readChunk 32 0 >>= look
         either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r
-        --r' <- look `fmap` runTestPool $ runObject "test/TestSuite.hs" $ asyncReadFull
-        --either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
+        r' <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readFull >>= look
+        either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
 
 testSharedLock =
     it "locks and unlocks quickly" $ do
         (_ :: Either SomeException a) <- try $ runTestPool $
-            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 4.3) $
                 error "Bang!"
         (_ :: Either SomeException a) <- try $ runTestPool $
-            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
-            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 1) $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 60) $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 60) $
                 error "Bang again!"
         assertBool "No deadlock" True
 
