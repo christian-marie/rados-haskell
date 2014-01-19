@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module System.Rados
 (
     -- *Types
@@ -42,6 +43,7 @@ module System.Rados
     -- @
     runConnect,
     runPool,
+    runAsync,
     runObject,
     -- *Syncronous IO
     writeChunk,
@@ -51,7 +53,7 @@ module System.Rados
     append,
     stat,
     remove,
-    -- *Asynchronous IO
+    -- *Async IO
     -- ** Async functions
     asyncWriteChunk,
     asyncWriteFull,
@@ -79,6 +81,8 @@ import System.Posix.Types(EpochTime)
 import Foreign.ForeignPtr
 import Foreign.Storable
 import System.IO.Unsafe
+import Data.Typeable
+import Data.Maybe
 
 import qualified Data.ByteString.Char8 as B
 import qualified System.Rados.Error as E
@@ -95,13 +99,16 @@ newtype Pool a = Pool (ReaderT I.Pool IO a)
 newtype Object parent a = Object (ReaderT B.ByteString parent a)
     deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
 
-newtype Asynchronous a = Asynchronous (ReaderT I.Pool IO a)
+newtype Async a = Async (ReaderT I.Pool IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
 data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
 data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
 data StatResult = StatResult Word64 EpochTime
-          | StatInFlight (ForeignPtr Word64) (ForeignPtr EpochTime)
+                | StatInFlight (ForeignPtr Word64) (ForeignPtr EpochTime)
+    deriving (Typeable)
+
+-- Make reading a StatResult transparent
 
 fileSize :: StatResult -> Word64
 fileSize (StatResult s _) = s
@@ -119,7 +126,7 @@ class Monad m => RadosReader m wrapper | m -> wrapper where
             Left e -> wrapFail e
             Right r -> readChunk (fileSize r) 0
     stat :: m (wrapper StatResult)
-    unWrap :: wrapper a -> m (Either E.RadosError a)
+    unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
     wrapFail :: E.RadosError -> m (wrapper a)
 
 instance RadosReader (Object Pool) (Either E.RadosError) where
@@ -138,7 +145,7 @@ instance RadosReader (Object Pool) (Either E.RadosError) where
     unWrap = return . id
     wrapFail = return . Left
 
-instance RadosReader (Object Asynchronous) AsyncRead where
+instance RadosReader (Object Async) AsyncRead where
     readChunk len offset = do
         (object, pool) <- askObjectPool
         withReadCompletion $ \completion -> 
@@ -172,8 +179,6 @@ writeFull buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncWriteFull pool object buffer
 
-
-
 append :: B.ByteString ->  Object Pool ()
 append buffer = do
     (object, pool) <- askObjectPool
@@ -184,25 +189,25 @@ remove = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncRemove pool object
 
-asyncWriteChunk :: Word64 -> B.ByteString -> Object Asynchronous AsyncAction
+asyncWriteChunk :: Word64 -> B.ByteString -> Object Async AsyncAction
 asyncWriteChunk offset buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWrite pool completion object offset buffer
 
-asyncWriteFull :: B.ByteString -> Object Asynchronous AsyncAction
+asyncWriteFull :: B.ByteString -> Object Async AsyncAction
 asyncWriteFull buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWriteFull pool completion object buffer
 
-asyncAppend :: B.ByteString -> Object Asynchronous AsyncAction
+asyncAppend :: B.ByteString -> Object Async AsyncAction
 asyncAppend buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncAppend pool completion object buffer
 
-asyncRemove :: Object Asynchronous AsyncAction
+asyncRemove :: Object Async AsyncAction
 asyncRemove = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
@@ -220,22 +225,32 @@ waitSafe async_request =
                 I.getAsyncError completion 
             return $ either Just (const Nothing) e
 
-look :: (MonadIO m)
+look :: (MonadIO m, Typeable a)
      => AsyncRead a -> m (Either E.RadosError a)
 look async_request =
     case async_request of
         ReadFailure e ->
             return $ Left e
         ReadInFlight completion a -> do
-            e <- liftIO $ do
+            ret <- liftIO $ do
                 I.waitForSafe completion
                 I.getAsyncError completion 
-            return $ either Left (const $ Right a) e
-
+            return $ case ret of
+                Left e -> Left e
+                Right n -> Right $
+                    -- This is a hack to trim async bytestrings to the correct
+                    -- size on recieving the actual number of bytes read from
+                    -- getAsyncError. The casting is needed so that the user
+                    -- can simply use "look" to look at any read value, it just
+                    -- so happens that when the user looks at a ByteString
+                    -- value we magically trim it to the correct size.
+                    case (cast a :: Maybe B.ByteString) of
+                        Just bs -> fromJust . cast $ B.take n bs
+                        Nothing -> a
 
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Asynchronous AsyncAction
+withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncAction
 withActionCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
@@ -246,7 +261,7 @@ withActionCompletion f = do
     
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Asynchronous (AsyncRead a)
+withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async (AsyncRead a)
 withReadCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
@@ -303,6 +318,12 @@ runPool pool (Pool action) = do
         (I.newPool connection pool)
         I.cleanupPool
         (\p -> runReaderT action p)
+
+runAsync :: Async a -> Pool a
+runAsync (Async action) = do
+    pool <- ask
+    liftIO $ runReaderT action pool
+
 
 runObject :: B.ByteString -> Object m a -> m a
 runObject object_id (Object action) = do
