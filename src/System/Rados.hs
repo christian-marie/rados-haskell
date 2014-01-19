@@ -1,11 +1,20 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FunctionalDependencies #-}
 module System.Rados
 (
     -- *Types
+    -- **Monads
     Connection,
     Pool,
     Object,
+    -- **Data types
+    StatResult,
+    fileSize,
+    modifyTime,
     -- *Exceptions
     -- |
     -- This library should only ever throw a 'RadosError'.
@@ -46,7 +55,6 @@ module System.Rados
     -- ** Async functions
     asyncWriteChunk,
     asyncWriteFull,
-    asyncReadChunk,
     asyncAppend,
     asyncRemove,
     -- ** Completion functions
@@ -68,6 +76,9 @@ import Control.Monad.Reader
 import Control.Applicative
 import Data.Word (Word64)
 import System.Posix.Types(EpochTime)
+import Foreign.ForeignPtr
+import Foreign.Storable
+import System.IO.Unsafe
 
 import qualified Data.ByteString.Char8 as B
 import qualified System.Rados.Error as E
@@ -75,86 +86,123 @@ import qualified System.Rados.Internal as I
 import Data.UUID
 import Data.UUID.V4
 
-
 newtype Connection a = Connection (ReaderT I.Connection IO a)
     deriving (Monad, MonadIO, MonadReader I.Connection)
 
 newtype Pool a = Pool (ReaderT I.Pool IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
-newtype Object a = Object (ReaderT B.ByteString Pool a)
+newtype Object parent a = Object (ReaderT B.ByteString parent a)
     deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
 
-data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
-data AsyncRead = ReadFailure E.RadosError | ReadInFlight I.Completion B.ByteString
+newtype Asynchronous a = Asynchronous (ReaderT I.Pool IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
-askObjectPool :: Object (B.ByteString, I.Pool) 
+data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
+data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
+data StatResult = StatResult Word64 EpochTime
+          | StatInFlight (ForeignPtr Word64) (ForeignPtr EpochTime)
+
+fileSize :: StatResult -> Word64
+fileSize (StatResult s _) = s
+fileSize (StatInFlight s _) = unsafePerformIO $ withForeignPtr s peek
+modifyTime :: StatResult -> EpochTime
+modifyTime (StatResult _ m) = m
+modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
+
+class Monad m => RadosReader m wrapper | m -> wrapper where
+    readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
+    readFull :: m (wrapper B.ByteString)
+    readFull = do
+        s <- stat >>= unWrap
+        case s of
+            Left e -> wrapFail e
+            Right r -> readChunk (fileSize r) 0
+    stat :: m (wrapper StatResult)
+    unWrap :: wrapper a -> m (Either E.RadosError a)
+    wrapFail :: E.RadosError -> m (wrapper a)
+
+instance RadosReader (Object Pool) (Either E.RadosError) where
+    readChunk len offset = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncRead pool object len offset
+
+    stat = do
+        (object, pool) <- askObjectPool
+        liftIO $ do
+            s <- I.syncStat pool object
+            return $ case s of
+                Left e -> Left e
+                Right (size, time) -> Right $ StatResult size time
+
+    unWrap = return . id
+    wrapFail = return . Left
+
+instance RadosReader (Object Asynchronous) AsyncRead where
+    readChunk len offset = do
+        (object, pool) <- askObjectPool
+        withReadCompletion $ \completion -> 
+            liftIO $ I.asyncRead pool completion object len offset
+
+    stat = do
+        (object, pool) <- askObjectPool
+        withReadCompletion $ \completion ->
+            liftIO $ do
+                s <- I.asyncStat pool completion object
+                return $ case s of
+                    Left e ->
+                        Left e
+                    Right (size_fp, mtime_fp) ->
+                        Right $ StatInFlight size_fp mtime_fp
+        
+    unWrap = look
+    wrapFail = return . ReadFailure
+
+askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
 askObjectPool = do
     liftM2 (,) ask (Object . lift $ ask)
 
-writeChunk :: Word64 -> B.ByteString -> Object ()
+writeChunk :: Word64 -> B.ByteString ->  Object Pool ()
 writeChunk offset buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncWrite pool object offset buffer
 
-writeFull :: B.ByteString -> Object ()
+writeFull :: B.ByteString ->  Object Pool ()
 writeFull buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncWriteFull pool object buffer
 
-readChunk :: Word64 -> Word64 -> Object (Either E.RadosError B.ByteString)
-readChunk len offset = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncRead pool object len offset
-
-readFull :: Object (Either E.RadosError B.ByteString)
-readFull = do
-    result <- stat
-    case result of
-        Left e -> return $ Left e
-        Right (size, _) -> readChunk size 0
 
 
-append :: B.ByteString -> Object ()
+append :: B.ByteString ->  Object Pool ()
 append buffer = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncAppend pool object buffer
 
-stat :: Object (Either E.RadosError (Word64, EpochTime))
-stat = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncStat pool object
-
-remove :: Object ()
+remove ::  Object Pool ()
 remove = do
     (object, pool) <- askObjectPool
     liftIO $ I.syncRemove pool object
 
-asyncWriteChunk :: Word64 -> B.ByteString -> Object AsyncAction
+asyncWriteChunk :: Word64 -> B.ByteString -> Object Asynchronous AsyncAction
 asyncWriteChunk offset buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWrite pool completion object offset buffer
 
-asyncWriteFull :: B.ByteString -> Object AsyncAction
+asyncWriteFull :: B.ByteString -> Object Asynchronous AsyncAction
 asyncWriteFull buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncWriteFull pool completion object buffer
 
-asyncReadChunk :: Word64 -> Word64 -> Object AsyncRead
-asyncReadChunk len offset = do
-    (object, pool) <- askObjectPool
-    withReadCompletion $ \completion -> 
-        liftIO $ I.asyncRead pool completion object len offset
-
-asyncAppend :: B.ByteString -> Object AsyncAction
+asyncAppend :: B.ByteString -> Object Asynchronous AsyncAction
 asyncAppend buffer = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncAppend pool completion object buffer
 
-asyncRemove :: Object AsyncAction
+asyncRemove :: Object Asynchronous AsyncAction
 asyncRemove = do
     (object, pool) <- askObjectPool
     withActionCompletion $ \completion -> 
@@ -173,20 +221,21 @@ waitSafe async_request =
             return $ either Just (const Nothing) e
 
 look :: (MonadIO m)
-     => AsyncRead -> m (Either E.RadosError B.ByteString)
+     => AsyncRead a -> m (Either E.RadosError a)
 look async_request =
     case async_request of
         ReadFailure e ->
             return $ Left e
-        ReadInFlight completion bs -> do
+        ReadInFlight completion a -> do
             e <- liftIO $ do
                 I.waitForSafe completion
                 I.getAsyncError completion 
-            return $ either Left (const $ Right bs) e
+            return $ either Left (const $ Right a) e
+
 
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object (AsyncAction)
+withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Asynchronous AsyncAction
 withActionCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
@@ -197,14 +246,14 @@ withActionCompletion f = do
     
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
-withReadCompletion :: (I.Completion -> IO (Either E.RadosError B.ByteString)) -> Object (AsyncRead)
+withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Asynchronous (AsyncRead a)
 withReadCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
     case result of
         Left e -> return $ ReadFailure e
-        Right bs -> do
-            return $ ReadInFlight completion bs
+        Right a -> do
+            return $ ReadInFlight completion a
 
 -- |
 -- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
@@ -255,7 +304,7 @@ runPool pool (Pool action) = do
         I.cleanupPool
         (\p -> runReaderT action p)
 
-runObject :: B.ByteString -> Object a -> Pool a
+runObject :: B.ByteString -> Object m a -> m a
 runObject object_id (Object action) = do
     runReaderT action object_id
 

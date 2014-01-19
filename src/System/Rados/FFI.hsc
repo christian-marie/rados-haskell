@@ -26,6 +26,7 @@ module System.Rados.FFI
     c_rados_aio_write,
     c_rados_aio_write_full,
     c_rados_aio_append,
+    c_rados_aio_stat,
     c_rados_aio_remove,
     c_rados_write,
     c_rados_write_full,
@@ -194,6 +195,15 @@ foreign import ccall unsafe "librados.h rados_aio_append"
         -> Ptr RadosCompletionT
         -> CString
         -> CSize
+        -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_aio_stat"
+    c_rados_aio_stat
+        :: Ptr RadosIOCtxT
+        -> CString
+        -> Ptr RadosCompletionT
+        -> Ptr Word64
+        -> Ptr CTime
         -> IO CInt
 
 foreign import ccall unsafe "librados.h rados_aio_remove"

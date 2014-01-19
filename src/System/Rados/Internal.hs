@@ -35,6 +35,7 @@ module System.Rados.Internal
     asyncWriteFull,
     asyncRead,
     asyncAppend,
+    asyncStat,
     asyncRemove,
     getAsyncError,
 -- **Locking
@@ -341,6 +342,30 @@ asyncRemove (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
         checkError' "rados_aio_append" $ F.c_rados_aio_remove
             ioctxt_p c_oid cmp_p
+
+-- |
+-- Request the file size and mtime, returns two pointers to the data that will
+-- be able to be peeked at when the request is complete.
+--
+-- These pointers will free themselves
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_stat>
+asyncStat
+    :: Pool
+    -> Completion
+    -> B.ByteString
+    -> IO (Either RadosError (ForeignPtr Word64, ForeignPtr CTime))
+asyncStat (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
+    B.useAsCString oid $ \c_oid -> do
+        size_fp <- mallocForeignPtr
+        time_fp <- mallocForeignPtr
+        withForeignPtr rados_completion_t_fp $ \cmp_p -> do
+            result <- withForeignPtr size_fp $ \p_size ->
+                withForeignPtr time_fp $ \p_time ->
+                    checkError' "rados_aio_stat" $
+                        F.c_rados_aio_stat ioctxt_p c_oid cmp_p p_size p_time
+            return $ either Left (const $ Right (size_fp, time_fp)) result
 
 
 -- |
