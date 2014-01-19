@@ -253,8 +253,8 @@ asyncRead (Pool ioctx_p) (Completion rados_completion_t_fp) oid len offset = do
             withForeignPtr rados_completion_t_fp $ \cmp_p ->
                 F.c_rados_aio_read ioctx_p c_oid cmp_p c_buf c_len c_offset
         case result of
-            Right read_bytes ->
-                Right <$> B.unsafePackCStringLen (c_buf, read_bytes)
+            Right _ ->
+                Right <$> B.unsafePackCStringLen (c_buf, fromIntegral len)
             Left e ->
                 return . Left $ e
 

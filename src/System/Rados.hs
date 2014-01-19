@@ -173,8 +173,9 @@ waitSafe async_request =
         ActionFailure e ->
             return $ Just e
         ActionInFlight completion -> do
-            e <- liftIO $ I.getAsyncError completion 
-            liftIO $ I.cleanupCompletion completion
+            e <- liftIO $ do
+                I.waitForSafe completion
+                I.getAsyncError completion 
             modifyCompletions (\cs -> Map.delete completion cs)
             return $ either Just (const Nothing) e
 
@@ -185,8 +186,9 @@ look async_request =
         ReadFailure e ->
             return $ Left e
         ReadInFlight completion bs -> do
-            e <- liftIO $ I.getAsyncError completion 
-            liftIO $ I.cleanupCompletion completion
+            e <- liftIO $ do
+                I.waitForSafe completion
+                I.getAsyncError completion 
             deleteCompletion completion
             return $ either Left (const $ Right bs) e
 

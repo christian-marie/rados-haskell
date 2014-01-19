@@ -43,6 +43,8 @@ suite = do
         testPutObject
         testGetObject
         testDeleteObject
+        testPutObjectAsync
+        testGetObjectAsync
     
     describe "Locking" $ do
         testLockWithoutOID
@@ -69,7 +71,7 @@ testPutObject =
 
 testGetObject =
     it "read object returns correct data" $ do
-        a <- runTestPool $ runObject "test/TestSuite.hs" $ readChunk 20 0
+        a <- runTestPool $ runObject "test/TestSuite.hs" $ readChunk 19 0
         either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") a
         (Right b) <- runTestPool $ runObject "test/TestSuite.hs" $ readFull
         assertEqual "Incorrect content readFull" "schrodinger's cat?\n" b
@@ -78,6 +80,22 @@ testDeleteObject =
     it "deletes the object afterward" $ do
         runTestPool $ runObject "test/TestSuite.hs" remove
         assertBool "Failed" True
+
+testPutObjectAsync =
+    it "write object accepted by storage cluster" $ do
+        runTestPool $ runObject "test/TestSuite.hs" $ do
+            wr <- asyncWriteFull "schrodinger's hai?\n"
+            waitSafe wr
+            wr' <- asyncWriteChunk 14 "cat"
+            waitSafe wr'
+        assertBool "Failed" True
+
+testGetObjectAsync =
+    it "read object returns correct data" $ do
+        r <- runTestPool $ runObject "test/TestSuite.hs" $ asyncReadChunk 19 0 >>= look
+        either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r
+        --r' <- look `fmap` runTestPool $ runObject "test/TestSuite.hs" $ asyncReadFull
+        --either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
 
 testLockWithoutOID =
     it "locks and unlocks quickly" $
