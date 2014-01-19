@@ -58,9 +58,7 @@ module System.Rados
     parseEnv,
     -- *Locking
     withExclusiveLock,
-    withIdempotentExclusiveLock,
     withSharedLock,
-    withIdempotentSharedLock,
     test
 )
 where
@@ -69,7 +67,6 @@ import Control.Exception (bracket, bracket_, throwIO)
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Applicative
-import qualified Data.Map as Map
 import Data.Word (Word64)
 import System.Posix.Types(EpochTime)
 
@@ -83,16 +80,14 @@ import Data.UUID.V4
 newtype Connection a = Connection (ReaderT I.Connection IO a)
     deriving (Monad, MonadIO, MonadReader I.Connection)
 
-newtype Pool a = Pool (ReaderT I.Pool (StateT Completions IO) a)
-    deriving (Functor, Monad, MonadIO, MonadState Completions,  MonadReader I.Pool)
+newtype Pool a = Pool (ReaderT I.Pool IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
 newtype Object a = Object (ReaderT B.ByteString Pool a)
     deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
 
 data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
 data AsyncRead = ReadFailure E.RadosError | ReadInFlight I.Completion B.ByteString
-
-type Completions = Map.Map I.Completion ()
 
 askObjectPool :: Object (B.ByteString, I.Pool) 
 askObjectPool = do
@@ -166,7 +161,7 @@ asyncRemove = do
     withActionCompletion $ \completion -> 
         liftIO $ I.asyncRemove pool completion object
 
-waitSafe :: (MonadIO m, CompletionsState m)
+waitSafe :: (MonadIO m)
             => AsyncAction -> m (Maybe E.RadosError)
 waitSafe async_request =
     case async_request of
@@ -176,10 +171,9 @@ waitSafe async_request =
             e <- liftIO $ do
                 I.waitForSafe completion
                 I.getAsyncError completion 
-            modifyCompletions (\cs -> Map.delete completion cs)
             return $ either Just (const Nothing) e
 
-look :: (MonadIO m, CompletionsState m)
+look :: (MonadIO m)
      => AsyncRead -> m (Either E.RadosError B.ByteString)
 look async_request =
     case async_request of
@@ -189,20 +183,8 @@ look async_request =
             e <- liftIO $ do
                 I.waitForSafe completion
                 I.getAsyncError completion 
-            deleteCompletion completion
             return $ either Left (const $ Right bs) e
 
-class CompletionsState m where
-    modifyCompletions :: (Completions -> Completions) -> m ()
-    deleteCompletion :: I.Completion -> m ()
-    deleteCompletion c = modifyCompletions (\cs -> Map.delete c cs)
-
-instance CompletionsState Pool where
-    modifyCompletions = modify
-
-instance CompletionsState Object where
-    modifyCompletions f = Object . lift $ modify f
-    
 -- | Run an action with a completion, cleaning up on failure, stashing in
 -- state otherwise.
 withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object (AsyncAction)
@@ -212,7 +194,6 @@ withActionCompletion f = do
     case result of
         Left e -> return $ ActionFailure e
         Right _ -> do
-            modifyCompletions (\cs -> Map.insert completion () cs)
             return $ ActionInFlight completion
     
 -- | Run an action with a completion, cleaning up on failure, stashing in
@@ -224,7 +205,6 @@ withReadCompletion f = do
     case result of
         Left e -> return $ ReadFailure e
         Right bs -> do
-            modifyCompletions (\cs -> Map.insert completion () cs)
             return $ ReadInFlight completion bs
 
 test :: IO ()
@@ -278,14 +258,10 @@ runConnect user configure (Connection action) = do
 runPool :: B.ByteString -> Pool a -> Connection a
 runPool pool (Pool action) = do
     connection <- ask
-    (result, completions) <- liftIO $ bracket
+    liftIO $ bracket
         (I.newPool connection pool)
         I.cleanupPool
-        (\conn -> runStateT (runReaderT action conn) Map.empty)
-    -- Maybe the user didn't care about the result of some of the async
-    -- requests they made, so we clean up after them
-    liftIO $ mapM_ I.cleanupCompletion (Map.keys completions)
-    return result
+        (\p -> runReaderT action p)
 
 runObject :: B.ByteString -> Object a -> Pool a
 runObject object_id (Object action) = do
@@ -306,50 +282,40 @@ parseEnv :: I.Connection -> IO (Maybe E.RadosError)
 parseEnv = I.confParseEnv
 
 -- | Perform an action with an exclusive lock on oid
-withExclusiveLock, withIdempotentExclusiveLock
-    :: I.Pool
-    -> B.ByteString    -- ^ Object ID
+withExclusiveLock
+    :: B.ByteString    -- ^ Object ID
     -> B.ByteString    -- ^ Name of lock
     -> B.ByteString    -- ^ Description of lock
     -> Maybe I.TimeVal -- ^ Optional duration of lock
-    -> IO a            -- ^ Action to perform with lock
-    -> IO a
-withExclusiveLock pool oid name desc duration action =
-    withLock pool oid name action $ \cookie -> 
+    -> Pool a          -- ^ Action to perform with lock
+    -> Pool a
+withExclusiveLock oid name desc duration action =
+    withLock oid name action $ \pool cookie -> 
         I.exclusiveLock pool oid name cookie desc duration []
 
-withIdempotentExclusiveLock pool oid name desc duration action =
-    withLock pool oid name action $ \cookie -> 
-        I.exclusiveLock pool oid name cookie desc duration [I.idempotent]
-
 -- | Perform an action with an shared lock on oid and tag
-withSharedLock, withIdempotentSharedLock
-    :: I.Pool
-    -> B.ByteString    -- ^ Object ID
+withSharedLock
+    :: B.ByteString    -- ^ Object ID
     -> B.ByteString    -- ^ Name of lock
     -> B.ByteString    -- ^ Description of lock
     -> B.ByteString    -- ^ Tag for shared lock
     -> Maybe I.TimeVal -- ^ Optional duration of lock
-    -> IO a            -- ^ Action to perform with lock
-    -> IO a
-withSharedLock pool oid name desc tag duration action =
-    withLock pool oid name action $ \cookie -> 
+    -> Pool a          -- ^ Action to perform with lock
+    -> Pool a
+withSharedLock oid name desc tag duration action =
+    withLock oid name action $ \pool cookie -> 
         I.sharedLock pool oid name cookie tag desc duration []
 
-withIdempotentSharedLock pool oid name desc tag duration action =
-    withLock pool oid name action $ \cookie ->
-        I.sharedLock pool oid name cookie tag desc duration [I.idempotent]
-
 withLock
-    :: I.Pool
+    :: B.ByteString
     -> B.ByteString
-    -> B.ByteString
-    -> IO b
-    -> (B.ByteString -> IO a)
-    -> IO b
-withLock pool oid name user_action lock_action = do
-    cookie <- B.pack . toString <$> nextRandom
-    bracket_
-        (lock_action cookie)
+    -> Pool a
+    -> (I.Pool -> B.ByteString -> IO b)
+    -> Pool a
+withLock oid name (Pool user_action) lock_action = do
+    pool <- ask
+    cookie <- liftIO $ B.pack . toString <$> nextRandom
+    liftIO $ bracket_
+        (lock_action pool cookie)
         (I.unlock pool oid name cookie)
-        user_action
+        (runReaderT user_action pool)
