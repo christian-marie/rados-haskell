@@ -380,12 +380,12 @@ syncWrite
     -> B.ByteString
     -> Word64
     -> B.ByteString
-    -> IO ()
+    -> IO (Maybe RadosError)
 syncWrite (Pool ioctxt_p) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = fromIntegral offset
-        checkError_ "rados_write" $ F.c_rados_write
+        maybeError "rados_write" $ F.c_rados_write
             ioctxt_p c_oid c_buf c_size c_offset
 
 -- |
@@ -396,11 +396,11 @@ syncWriteFull
     :: Pool
     -> B.ByteString
     -> B.ByteString
-    -> IO ()
+    -> IO (Maybe RadosError)
 syncWriteFull (Pool ioctxt_p) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, len) ->
-        checkError_ "rados_write_full" $ F.c_rados_write_full
+        maybeError "rados_write_full" $ F.c_rados_write_full
             ioctxt_p c_oid c_buf len
 
 -- |
@@ -411,11 +411,11 @@ syncAppend
     :: Pool
     -> B.ByteString
     -> B.ByteString
-    -> IO ()
+    -> IO (Maybe RadosError)
 syncAppend (Pool ioctxt_p) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
-        checkError_ "rados_append" $ F.c_rados_append
+        maybeError "rados_append" $ F.c_rados_append
             ioctxt_p c_oid c_buf c_size
 
 -- |
@@ -462,10 +462,10 @@ useAsCStringCSize bs f =
 -- |
 -- Delete an object from 'Pool' by ID.
 --
-syncRemove :: Pool -> B.ByteString -> IO ()
+syncRemove :: Pool -> B.ByteString -> IO (Maybe RadosError)
 syncRemove (Pool ioctxt_p) oid =
     B.useAsCString oid $ \c_oid ->
-        checkError_ "rados_remove" $ F.c_rados_remove
+        maybeError "rados_remove" $ F.c_rados_remove
             ioctxt_p c_oid
 
 syncStat :: Pool -> B.ByteString -> IO (Either RadosError (Word64, EpochTime))

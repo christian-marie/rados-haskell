@@ -45,20 +45,17 @@ module System.Rados
     runPool,
     runAsync,
     runObject,
-    -- *Syncronous IO
-    writeChunk,
-    writeFull,
+    -- * Reading
     readChunk,
     readFull,
-    append,
     stat,
+    -- * Writing
+    writeChunk,
+    writeFull,
+    append,
     remove,
     -- *Async IO
     -- ** Async functions
-    asyncWriteChunk,
-    asyncWriteFull,
-    asyncAppend,
-    asyncRemove,
     -- ** Completion functions
     waitSafe,
     look,
@@ -117,14 +114,57 @@ modifyTime :: StatResult -> EpochTime
 modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
+class Monad m => RadosWriter m error_wrapper where
+    writeChunk :: Word64 -> B.ByteString ->  m error_wrapper
+    writeFull :: B.ByteString -> m error_wrapper
+    append :: B.ByteString -> m error_wrapper
+    remove :: m error_wrapper
+
+instance RadosWriter (Object Pool) (Maybe E.RadosError) where
+    writeChunk offset buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncWrite pool object offset buffer
+
+    writeFull buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncWriteFull pool object buffer
+
+    append buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncAppend pool object buffer
+
+    remove = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncRemove pool object
+
+instance RadosWriter (Object Async) (AsyncAction) where
+    writeChunk offset buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncWrite pool completion object offset buffer
+
+    writeFull buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncWriteFull pool completion object buffer
+
+    append buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncAppend pool completion object buffer
+
+    remove = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncRemove pool completion object
+
+
 class Monad m => RadosReader m wrapper | m -> wrapper where
     readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
     readFull :: m (wrapper B.ByteString)
-    readFull = do
-        s <- stat >>= unWrap
-        case s of
-            Left e -> wrapFail e
-            Right r -> readChunk (fileSize r) 0
+    readFull =
+        stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
+
     stat :: m (wrapper StatResult)
     unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
     wrapFail :: E.RadosError -> m (wrapper a)
@@ -144,6 +184,7 @@ instance RadosReader (Object Pool) (Either E.RadosError) where
 
     unWrap = return . id
     wrapFail = return . Left
+
 
 instance RadosReader (Object Async) AsyncRead where
     readChunk len offset = do
@@ -168,50 +209,6 @@ instance RadosReader (Object Async) AsyncRead where
 askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
 askObjectPool = do
     liftM2 (,) ask (Object . lift $ ask)
-
-writeChunk :: Word64 -> B.ByteString ->  Object Pool ()
-writeChunk offset buffer = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncWrite pool object offset buffer
-
-writeFull :: B.ByteString ->  Object Pool ()
-writeFull buffer = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncWriteFull pool object buffer
-
-append :: B.ByteString ->  Object Pool ()
-append buffer = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncAppend pool object buffer
-
-remove ::  Object Pool ()
-remove = do
-    (object, pool) <- askObjectPool
-    liftIO $ I.syncRemove pool object
-
-asyncWriteChunk :: Word64 -> B.ByteString -> Object Async AsyncAction
-asyncWriteChunk offset buffer = do
-    (object, pool) <- askObjectPool
-    withActionCompletion $ \completion -> 
-        liftIO $ I.asyncWrite pool completion object offset buffer
-
-asyncWriteFull :: B.ByteString -> Object Async AsyncAction
-asyncWriteFull buffer = do
-    (object, pool) <- askObjectPool
-    withActionCompletion $ \completion -> 
-        liftIO $ I.asyncWriteFull pool completion object buffer
-
-asyncAppend :: B.ByteString -> Object Async AsyncAction
-asyncAppend buffer = do
-    (object, pool) <- askObjectPool
-    withActionCompletion $ \completion -> 
-        liftIO $ I.asyncAppend pool completion object buffer
-
-asyncRemove :: Object Async AsyncAction
-asyncRemove = do
-    (object, pool) <- askObjectPool
-    withActionCompletion $ \completion -> 
-        liftIO $ I.asyncRemove pool completion object
 
 waitSafe :: (MonadIO m)
             => AsyncAction -> m (Maybe E.RadosError)
