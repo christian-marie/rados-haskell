@@ -11,30 +11,15 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# OPTIONS -fno-warn-unused-imports #-}
 
 module TestSuite where
 
 import Test.Hspec
 import Test.HUnit
 
---
--- Otherwise redundent imports, but useful for testing in GHCi.
---
-
-import Control.Monad
 import Control.Exception (throwIO, try, SomeException)
-import Data.ByteString (ByteString)
 import Data.Maybe
-import qualified Data.ByteString.Char8 as S
-import qualified Data.ByteString.Lazy as L
-import Debug.Trace
 import Control.Applicative
-
---
--- What we're actually testing.
---
-
 import System.Rados
 
 suite :: Spec
@@ -53,7 +38,6 @@ suite = do
         testGetObject
         testDeleteObject
         testPutObjectAtomicAsync
-        testGetObject
     
     describe "Locking" $ do
         testSharedLock
@@ -110,13 +94,14 @@ testGetObjectAsync =
 
 testPutObjectAtomicAsync =
     it "atomically writes data" $ do
-        write <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
-            runAtomicWrite $ do
+        e <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
+            write <- runAtomicWrite $ do
+                setXAttribute "Pony" "blue"
+                compareXAttribute "Pony" eq "pink"
                 writeFull "schrodinger's hai?\n"
                 writeChunk 14 "cat"
-        e <- waitSafe write
-        print e
-        assertBool "Write failed" (isNothing e)
+            waitSafe write
+        assertBool "Write did not fail" (isJust e)
         
 testPutObjectAtomic =
     it "atomically writes data" $ do
@@ -137,5 +122,11 @@ testSharedLock =
         assertBool "No deadlock" True
 
 testExclusiveLock =
-    it "locks and unlocks quickly" $
-        assertBool "Failed" True
+    it "locks and unlocks quickly" $ do
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withExclusiveLock "test/TestSuite.hs" "lock" "description" (Just 4.3) $
+                error "Bang!"
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withExclusiveLock "test/TestSuite.hs" "lock" "description" (Just 4.3) $
+                error "Bang!"
+        assertBool "No deadlock" True

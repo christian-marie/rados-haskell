@@ -161,12 +161,15 @@ class Monad m => AtomicWriter m e | m -> e where
 
 class Monad m => RadosReader m wrapper | m -> wrapper where
     readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
+
     readFull :: m (wrapper B.ByteString)
     readFull =
         stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
 
     stat :: m (wrapper StatResult)
+
     unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
+
     wrapFail :: E.RadosError -> m (wrapper a)
 
 instance RadosWriter (Object Pool) (Maybe E.RadosError) where
@@ -281,7 +284,7 @@ askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool)
 askObjectPool = do
     liftM2 (,) ask (Object . lift $ ask)
 
-waitSafe :: (MonadIO m)
+waitSafe :: (RadosWriter m e, MonadIO m)
             => AsyncAction -> m (Maybe E.RadosError)
 waitSafe async_request =
     case async_request of
@@ -293,7 +296,7 @@ waitSafe async_request =
                 I.getAsyncError completion 
             return $ either Just (const Nothing) e
 
-look :: (MonadIO m, Typeable a)
+look :: (RadosReader m e, MonadIO m, Typeable a)
      => AsyncRead a -> m (Either E.RadosError a)
 look async_request =
     case async_request of

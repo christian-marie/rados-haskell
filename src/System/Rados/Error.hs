@@ -11,7 +11,7 @@ module System.Rados.Error
 ) where
 
 import Control.Exception
-import Control.Monad (void)
+import Control.Monad.Error
 import Data.Typeable
 import Foreign.C.Error
 import Foreign.C.String
@@ -45,7 +45,12 @@ data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
                            , cFunction :: String
                            , strerror  :: String
                            }
+                | User     { message :: String }
     deriving (Eq, Ord, Typeable)
+
+
+instance Error RadosError where
+    strMsg err = User err
 
 instance Show RadosError where
     show Unknown{..} = "rados: unknown rados error in '" ++
