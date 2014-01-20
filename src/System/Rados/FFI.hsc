@@ -39,6 +39,16 @@ module System.Rados.FFI
     c_rados_lock_shared,
     c_strerror,
     c_getProgArgv,
+    c_rados_create_write_op,
+    c_rados_release_write_op,
+    c_rados_write_op_cmpxattr,
+    c_rados_write_op_setxattr,
+    c_rados_write_op_rmxattr,
+    c_rados_write_op_create,
+    c_rados_write_op_write,
+    c_rados_write_op_remove,
+    c_rados_write_op_operate,
+    c_rados_aio_write_op_operate,
 )
 where
 
@@ -59,13 +69,25 @@ data RadosIOCtxT
 -- typedef void *rados_completion_t;
 data RadosCompletionT
 
-newtype LockFlag = LockFlag { unLockFlag :: Word8 }
-#{enum LockFlag, LockFlag, idempotent = LIBRADOS_LOCK_FLAG_RENEW }
+-- typedef void *rados_write_op_t;
+data RadosWriteOpT
 
--- typedef void (*rados_callback_t)(rados_completion_t cb, void *arg);
 type RadosCallback  = Ptr RadosCompletionT -> Ptr () -> IO ()
 type RadosCallbackT = FunPtr RadosCallback
 
+newtype LockFlag = LockFlag { unLockFlag :: Word8 }
+#{enum LockFlag, LockFlag, idempotent = LIBRADOS_LOCK_FLAG_RENEW }
+
+newtype ComparisonFlag = ComparisonFlag { unComparisonFlag :: Word8 }
+#{enum ComparisonFlag, ComparisonFlag,
+    nop = LIBRADOS_CMPXATTR_OP_NOP,
+    eq  = LIBRADOS_CMPXATTR_OP_EQ,
+    ne  = LIBRADOS_CMPXATTR_OP_NE,
+    gt  = LIBRADOS_CMPXATTR_OP_GT,
+    gte = LIBRADOS_CMPXATTR_OP_GTE,
+    lt  = LIBRADOS_CMPXATTR_OP_LT,
+    lte = LIBRADOS_CMPXATTR_OP_LTE
+}
 
 data TimeVal = TimeVal
     { seconds      :: CLong 
@@ -296,3 +318,75 @@ foreign import ccall unsafe "getProgArgv"
         :: Ptr CInt
         -> Ptr (Ptr CString)
         -> IO ()
+foreign import ccall unsafe "librados.h rados_create_write_op"
+    c_rados_create_write_op
+        :: IO (Ptr RadosWriteOpT)
+
+foreign import ccall unsafe "librados.h rados_release_write_op"
+    c_rados_release_write_op
+        :: Ptr RadosWriteOpT
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_assert_exists"
+    c_rados_write_op_assert_exists
+        :: Ptr RadosWriteOpT
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_cmpxattr"
+    c_rados_write_op_cmpxattr
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> ComparisonFlag
+        -> CString
+        -> CSize
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_setxattr"
+    c_rados_write_op_setxattr
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> CString
+        -> CSize
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_rmxattr"
+    c_rados_write_op_rmxattr
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> CString
+        -> CSize
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_create"
+    c_rados_write_op_create
+        :: Ptr RadosWriteOpT
+        -> CInt
+        -> CString
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_write"
+    c_rados_write_op_write
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> CSize
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_remove"
+    c_rados_write_op_remove
+        :: Ptr RadosWriteOpT
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_operate"
+    c_rados_write_op_operate
+        :: Ptr RadosWriteOpT
+        -> Ptr RadosIOCtxT
+        -> CString
+        -> Ptr CTime
+
+foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
+    c_rados_aio_write_op_operate
+        :: Ptr RadosWriteOpT
+        -> Ptr RadosIOCtxT
+        -> Ptr RadosCompletionT
+        -> CString
+        -> Ptr CTime

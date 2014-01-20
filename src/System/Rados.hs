@@ -1,10 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+
 module System.Rados
 (
     -- *General usage
@@ -328,11 +327,9 @@ runAsync (Async action) = do
     pool <- ask
     liftIO $ runReaderT action pool
 
-
 runObject :: B.ByteString -> Object m a -> m a
 runObject object_id (Object action) = do
     runReaderT action object_id
-
 
 --- |
 -- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
