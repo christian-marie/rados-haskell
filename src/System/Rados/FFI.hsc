@@ -7,8 +7,17 @@ module System.Rados.FFI
     RadosT,
     RadosIOCtxT,
     RadosCompletionT,
+    RadosWriteOpT,
     LockFlag(..),
     idempotent,
+    ComparisonFlag(..),
+    nop,
+    eq,
+    ne,
+    gt,
+    gte,
+    lt,
+    lte,
     c_rados_create,
     c_rados_shutdown,
     c_rados_conf_read_file,
@@ -41,6 +50,7 @@ module System.Rados.FFI
     c_getProgArgv,
     c_rados_create_write_op,
     c_rados_release_write_op,
+    c_rados_write_op_assert_exists,
     c_rados_write_op_cmpxattr,
     c_rados_write_op_setxattr,
     c_rados_write_op_rmxattr,
@@ -322,10 +332,9 @@ foreign import ccall unsafe "librados.h rados_create_write_op"
     c_rados_create_write_op
         :: IO (Ptr RadosWriteOpT)
 
-foreign import ccall unsafe "librados.h rados_release_write_op"
+foreign import ccall unsafe "librados.h &rados_release_write_op"
     c_rados_release_write_op
-        :: Ptr RadosWriteOpT
-        -> IO ()
+        :: FunPtr (Ptr RadosWriteOpT -> IO ())
 
 foreign import ccall unsafe "librados.h rados_write_op_assert_exists"
     c_rados_write_op_assert_exists
@@ -353,8 +362,6 @@ foreign import ccall unsafe "librados.h rados_write_op_rmxattr"
     c_rados_write_op_rmxattr
         :: Ptr RadosWriteOpT
         -> CString
-        -> CString
-        -> CSize
         -> IO ()
 
 foreign import ccall unsafe "librados.h rados_write_op_create"
@@ -382,6 +389,7 @@ foreign import ccall unsafe "librados.h rados_write_op_operate"
         -> Ptr RadosIOCtxT
         -> CString
         -> Ptr CTime
+        -> IO ()
 
 foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
     c_rados_aio_write_op_operate
@@ -390,3 +398,4 @@ foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
         -> Ptr RadosCompletionT
         -> CString
         -> Ptr CTime
+        -> IO ()

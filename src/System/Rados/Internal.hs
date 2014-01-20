@@ -28,7 +28,6 @@ module System.Rados.Internal
     syncStat,
 -- **Asynchronous
     newCompletion,
-    cleanupCompletion,
     waitForComplete,
     waitForSafe,
     asyncWrite,
@@ -43,6 +42,16 @@ module System.Rados.Internal
     sharedLock,
     unlock,
     F.idempotent,
+-- ** Atomic write operations
+    newWriteOperation,
+    writeOperationAssertExists,
+    writeOperationCompareXAttribute,
+    writeOperationSetXAttribute,
+    writeOperationRemoveXAttribute,
+    writeOperationCreate,
+    writeOperationWrite,
+    writeOperate,
+    asyncWriteOperate,
 ) where
 
 import System.Rados.Error
@@ -59,11 +68,17 @@ import System.Posix.Types(EpochTime)
 
 -- | A connection to a rados cluster, required to get a 'Pool'
 newtype Connection = Connection (Ptr F.RadosT)
+
 -- | An IO context with a rados pool.
-newtype Pool       = Pool (Ptr F.RadosIOCtxT)
+newtype Pool = Pool (Ptr F.RadosIOCtxT)
+
 -- | A handle to query the status of an asynchronous action
 newtype Completion = Completion (ForeignPtr F.RadosCompletionT)
     deriving (Ord, Eq)
+
+-- | A write operation groups many individal operations together to be executed
+-- atomically
+newtype WriteOperation = WriteOperation (ForeignPtr F.RadosWriteOpT)
 
 -- |
 -- Attempt to create a new 'Connection, taking an optional id.
@@ -178,8 +193,7 @@ cleanupPool (Pool p) = F.c_rados_ioctx_destroy p
 -- |
 -- Attempt to create a new 'Completion' that can be used with async IO actions.
 --
--- You will need to run cleanupCompletion on the 'Completion' when you are done
--- with it.
+-- Completion will automatically be cleaned up when it goes out of scope
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_create_completion>
@@ -189,15 +203,6 @@ newCompletion =
         checkError_ "rados_aio_create_completion" $
             F.c_rados_aio_create_completion nullPtr nullFunPtr nullFunPtr completion_p_p
         Completion <$> (peek completion_p_p >>= newForeignPtr F.c_rados_aio_release)
-
--- |
--- Cleanup a 'Completion'
---
--- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_release>
-cleanupCompletion :: Completion -> IO ()
-cleanupCompletion (Completion rados_completion_t_fp) =
-    finalizeForeignPtr rados_completion_t_fp
 
 -- |
 -- Block until a completion is complete. I.e. the operation associated with
@@ -592,3 +597,89 @@ unlock (Pool ioctx_p) oid name cookie =
                              c_name
                              c_cookie
 
+newWriteOperation
+    :: IO WriteOperation
+newWriteOperation = 
+    WriteOperation <$> (F.c_rados_create_write_op >>=
+                        newForeignPtr F.c_rados_release_write_op)
+
+writeOperationAssertExists
+    :: WriteOperation
+    -> IO ()
+writeOperationAssertExists (WriteOperation o) =
+    withForeignPtr o F.c_rados_write_op_assert_exists 
+
+writeOperationCompareXAttribute
+    :: WriteOperation
+    -> B.ByteString
+    -> F.ComparisonFlag
+    -> B.ByteString
+    -> IO () 
+writeOperationCompareXAttribute (WriteOperation o) key comparison_flag value =
+    withForeignPtr o $ \ofp ->
+    B.useAsCString key $ \c_key -> 
+    B.useAsCStringLen value $ \(c_val, c_val_len) -> do
+        F.c_rados_write_op_cmpxattr
+            ofp c_key comparison_flag c_val (fromIntegral c_val_len)
+
+writeOperationSetXAttribute
+    :: WriteOperation
+    -> B.ByteString
+    -> B.ByteString
+    -> IO () 
+writeOperationSetXAttribute (WriteOperation o) key value =
+    withForeignPtr o $ \ofp ->
+    B.useAsCString key $ \c_key -> 
+    B.useAsCStringLen value $ \(c_val, c_val_len) -> do
+        F.c_rados_write_op_setxattr ofp c_key c_val (fromIntegral c_val_len)
+
+
+writeOperationRemoveXAttribute
+    :: WriteOperation
+    -> B.ByteString
+    -> IO () 
+writeOperationRemoveXAttribute (WriteOperation o) key =
+    withForeignPtr o $ \ofp ->
+    B.useAsCString key $ \c_key -> 
+        F.c_rados_write_op_rmxattr ofp c_key
+
+writeOperationCreate
+    :: WriteOperation
+    -> Bool
+    -> IO () 
+writeOperationCreate (WriteOperation o) exclusive =
+    withForeignPtr o $ \ofp ->
+        let int_exclusive = if exclusive then 1 else 0 in
+            F.c_rados_write_op_create ofp int_exclusive nullPtr
+
+writeOperationWrite
+    :: WriteOperation
+    -> B.ByteString
+    -> IO ()
+writeOperationWrite (WriteOperation o) buffer = 
+    withForeignPtr o $ \ofp ->
+    B.useAsCStringLen buffer $ \(c_buf, c_len) ->
+        F.c_rados_write_op_write ofp c_buf (fromIntegral c_len)
+
+writeOperate
+    :: WriteOperation
+    -> Pool
+    -> B.ByteString
+    -> IO ()
+writeOperate (WriteOperation o) (Pool ioctx_p) oid = 
+    withForeignPtr o $ \ofp ->
+    B.useAsCString oid $ \c_oid->
+        F.c_rados_write_op_operate ofp ioctx_p c_oid nullPtr
+
+asyncWriteOperate
+    :: WriteOperation
+    -> Pool
+    -> Completion
+    -> B.ByteString
+    -> IO () 
+asyncWriteOperate (WriteOperation o) (Pool ioctx_p)
+                  (Completion rados_completion_t_fp) oid =
+    withForeignPtr o $ \ofp ->
+    withForeignPtr rados_completion_t_fp $ \cmp_p ->
+    B.useAsCString oid $ \c_oid->
+        F.c_rados_aio_write_op_operate ofp ioctx_p cmp_p c_oid nullPtr
