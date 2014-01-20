@@ -6,9 +6,9 @@
 
 module System.Rados
 (
-    -- *General usage
     -- |
-    -- ** Quick example
+    -- * General usage
+    --
     -- There are a series of convenience monads to avoid you having to carry
     -- around state yourself:
     --
@@ -21,16 +21,25 @@ module System.Rados
     --                 writeFull \"hai!\"
     -- @
     --
-    -- ** Reading signatures
+    -- A note on reading signatures:
+    --
     -- #signatures#
     -- In order to have the same reading and writing API presented to you
-    -- within 'Async', 'Pool' and 'Atomic' monads, the return value of many
-    -- functions has been generalized.
+    -- within 'Async', 'Pool' and 'Atomic' monads, the return value the basic
+    -- read/write functions are not fixed.
     --
-    -- TODO: Document further once Atomic writes is done
+    -- The return value wrappers are documented in the 'runObject', 'runAsync'
+    -- and 'runAtomicWrite' sections.
+    -- * Initialization
     runConnect,
+    parseConfig,
+    parseArgv,
+    parseEnv,
     runPool,
+    -- * Asynchronous requests
     runAsync,
+    waitSafe,
+    look,
     runObject,
     runAtomicWrite,
     -- * Reading
@@ -42,25 +51,16 @@ module System.Rados
     writeFull,
     append,
     remove,
-    -- *Async IO
-    -- ** Async functions
-    -- ** Completion functions
-    waitSafe,
-    look,
-    -- *Configuration
-    parseConfig,
-    parseArgv,
-    parseEnv,
-    -- *Locking
+    -- * Locking
     withExclusiveLock,
     withSharedLock,
-    -- *Types
-    -- **Monads
+    -- * Types
+    -- ** Monads
     Connection,
     Pool,
     Object,
     Async,
-    -- **Data types
+    -- ** Data types
     StatResult,
     fileSize,
     modifyTime,
@@ -132,6 +132,25 @@ class Monad m => RadosWriter m e | m -> e where
     remove :: m e
 
 class Monad m => AtomicWriter m e | m -> e where
+    -- | Must be run within an Object monad, this will run all writes
+    -- atomically. The writes will be queued up, and on execution of the monad
+    -- will be sent to ceph in one batch request.
+    --
+    -- @
+    -- e <- runOurPool . runObject \"hi\" . runAtomicWrite $ do
+    --     remove
+    --     writeChunk 42 "fourty-two"
+    -- isNothing e
+    -- @
+    --
+    -- Or for async:
+    --
+    -- @
+    -- e <- runOurPool . runAsync . runObject \"hi\" . runAtomicWrite $ do
+    --     remove
+    --     writeChunk 42 "fourty-two"
+    -- isNothing <$> waitSafe e
+    -- @
     runAtomicWrite :: AtomicWrite a -> m e
 
 class Monad m => RadosReader m wrapper | m -> wrapper where
@@ -349,10 +368,14 @@ runConnect user configure (Connection action) = do
 -- Open a 'Pool' with ceph and perform an action with it, cleaning up with
 -- 'bracket'.
 --
+-- This may throw a RadosError to IO if the pool cannot be opened.
+--
+-- For the following examples, we shall use:
+--
 -- @
--- ...
---     runPool \"pool42\" $ do
---         ...
+-- runOurPool :: Pool a -> IO a
+-- runOurPool = 
+--     runConnect Nothing parseArgv . runPool "magic_pool"
 -- @
 runPool :: B.ByteString -> Pool a -> Connection a
 runPool pool (Pool action) = do
@@ -362,14 +385,40 @@ runPool pool (Pool action) = do
         I.cleanupPool
         (\p -> runReaderT action p)
 
+-- |
+-- runObject is a convenience/readability monad to store the provide object id
+-- and provide it to read and write actions.
+-- @
+-- runOurPool . runObject \"an oid\" readFull
+-- @
+runObject :: B.ByteString -> Object m a -> m a
+runObject object_id (Object action) = do
+    runReaderT action object_id
+
+-- |
+-- Any read/writes within this context will be run asynchronously, a
+-- runAtomicWrite run within this monad will also run that atomic write
+-- asynchronously.
+--
+-- Return values of reads and writes are wrapped within 'AsyncRead' or
+-- 'AsyncAction' respectively. You may extract the actual value from a read via
+-- 'look' and 'waitSafe'.
+--
+-- The asynchronous nature of execution here means that if you fail to inspect
+-- asynchronous writes with 'waitSafe', you will never know if they failed.
+--
+-- @
+-- runOurPool . runAsync $ runObject \"a box\" $ do
+--   wr <- writeFull \"schrodinger's hai?\\n\"
+--   writeChunk 14 \"cat\" -- Don't care about the cat.
+--   print . isNothing \<$\> waitSafe wr
+--   r <- readFull >>= look
+--   either throwIO print r
+-- @
 runAsync :: Async a -> Pool a
 runAsync (Async action) = do
     pool <- ask
     liftIO $ runReaderT action pool
-
-runObject :: B.ByteString -> Object m a -> m a
-runObject object_id (Object action) = do
-    runReaderT action object_id
 
 --- |
 -- Read a config from a relative or absolute 'FilePath' into a 'Connection'.

@@ -29,6 +29,7 @@ import Data.Maybe
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
 import Debug.Trace
+import Control.Applicative
 
 --
 -- What we're actually testing.
@@ -50,19 +51,21 @@ suite = do
         testDeleteObject
         testPutObjectAtomic
         testGetObject
+        testDeleteObject
+        testPutObjectAtomicAsync
+        testGetObject
     
     describe "Locking" $ do
         testSharedLock
         testExclusiveLock
 
 runTestPool :: Pool a -> IO a
-runTestPool a = 
-        runConnect Nothing (parseConfig "/etc/ceph/ceph.conf") $
-            runPool "test1" a
+runTestPool = 
+    runConnect Nothing (parseConfig "/etc/ceph/ceph.conf") . runPool "test1"
 
 testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
 testGetObjectAsync, testPutObjectAsync, testSharedLock :: Spec
-testExclusiveLock, testPutObjectAtomic:: Spec
+testExclusiveLock, testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
 
 testConnectionHost =
     it "able to establish connetion to local Ceph cluster" $ do
@@ -93,7 +96,7 @@ testPutObjectAsync =
     it "write object accepted by storage cluster" $ do
         runTestPool . runAsync $ runObject "test/TestSuite.hs" $ do
             wr <- writeFull "schrodinger's hai?\n"
-            waitSafe wr
+            print . isNothing <$> waitSafe wr
             wr' <- writeChunk 14 "cat"
             waitSafe wr'
         assertBool "Failed" True
@@ -105,15 +108,21 @@ testGetObjectAsync =
         r' <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readFull >>= look
         either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
 
-testPutObjectAtomic =
+testPutObjectAtomicAsync =
     it "atomically writes data" $ do
-        e <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
-            write <- runAtomicWrite $ do
+        write <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
+            runAtomicWrite $ do
                 writeFull "schrodinger's hai?\n"
                 writeChunk 14 "cat"
-            waitSafe write
+        e <- waitSafe write
         assertBool "Write failed" (isNothing e)
         
+testPutObjectAtomic =
+    it "atomically writes data" $ do
+        e <- runTestPool . runObject "test/TestSuite.hs" . runAtomicWrite $ do
+                writeFull "schrodinger's hai?\n"
+                writeChunk 14 "cat"
+        assertBool "Write failed" (isNothing e)
 
 testSharedLock =
     it "locks and unlocks quickly" $ do
