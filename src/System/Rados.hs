@@ -42,6 +42,12 @@ module System.Rados
     look,
     runObject,
     runAtomicWrite,
+    -- * Extra atomic operations
+    assertExists,
+    compareXAttribute,
+    I.eq, I.ne, I.gt, I.gte, I.lt, I.lte, I.nop,
+    setXAttribute,
+
     -- * Reading
     readChunk,
     readFull,
@@ -474,3 +480,19 @@ withLock oid name (Pool user_action) lock_action = do
         (lock_action pool cookie)
         (I.unlock pool oid name cookie)
         (runReaderT user_action pool)
+
+assertExists :: AtomicWrite ()
+assertExists = do
+    op <- ask
+    liftIO $ I.writeOperationAssertExists op
+
+compareXAttribute :: B.ByteString -> I.ComparisonFlag -> B.ByteString -> AtomicWrite ()
+compareXAttribute key operator value = do
+    op <- ask
+    liftIO $ I.writeOperationCompareXAttribute op key operator value
+
+setXAttribute :: B.ByteString -> B.ByteString -> AtomicWrite ()
+setXAttribute key value = do
+    op <- ask
+    liftIO $ I.writeOperationSetXAttribute op key value
+

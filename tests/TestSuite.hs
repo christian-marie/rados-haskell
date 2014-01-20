@@ -115,13 +115,14 @@ testPutObjectAtomicAsync =
                 writeFull "schrodinger's hai?\n"
                 writeChunk 14 "cat"
         e <- waitSafe write
+        print e
         assertBool "Write failed" (isNothing e)
         
 testPutObjectAtomic =
     it "atomically writes data" $ do
         e <- runTestPool . runObject "test/TestSuite.hs" . runAtomicWrite $ do
-                writeFull "schrodinger's hai?\n"
-                writeChunk 14 "cat"
+            writeFull "schrodinger's hai?\n"
+            writeChunk 14 "cat"
         assertBool "Write failed" (isNothing e)
 
 testSharedLock =

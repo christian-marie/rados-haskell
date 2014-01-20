@@ -10,6 +10,7 @@ module System.Rados.Internal
     WriteOperation,
     F.TimeVal(..),
     F.LockFlag,
+    F.ComparisonFlag,
 -- *Connecting
     newConnection,
     cleanupConnection,
@@ -47,6 +48,7 @@ module System.Rados.Internal
     newWriteOperation,
     writeOperationAssertExists,
     writeOperationCompareXAttribute,
+    F.nop, F.eq, F.ne, F.gt, F.gte, F.lt, F.lte,
     writeOperationSetXAttribute,
     writeOperationRemoveXAttribute,
     writeOperationCreate,
