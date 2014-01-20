@@ -32,6 +32,7 @@ module System.Rados
     runPool,
     runAsync,
     runObject,
+    runAtomicWrite,
     -- * Reading
     readChunk,
     readFull,
@@ -103,6 +104,9 @@ newtype Object parent a = Object (ReaderT B.ByteString parent a)
 newtype Async a = Async (ReaderT I.Pool IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
+newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.WriteOperation)
+
 data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
 data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
 data StatResult = StatResult Word64 EpochTime
@@ -126,6 +130,9 @@ class Monad m => RadosWriter m e | m -> e where
     writeFull :: B.ByteString -> m e
     append :: B.ByteString -> m e
     remove :: m e
+
+class Monad m => AtomicWriter m e | m -> e where
+    runAtomicWrite :: AtomicWrite a -> m e
 
 class Monad m => RadosReader m wrapper | m -> wrapper where
     readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
@@ -154,7 +161,7 @@ instance RadosWriter (Object Pool) (Maybe E.RadosError) where
         (object, pool) <- askObjectPool
         liftIO $ I.syncRemove pool object
 
-instance RadosWriter (Object Async) (AsyncAction) where
+instance RadosWriter (Object Async) AsyncAction where
     writeChunk offset buffer = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
@@ -175,6 +182,40 @@ instance RadosWriter (Object Async) (AsyncAction) where
         withActionCompletion $ \completion -> 
             liftIO $ I.asyncRemove pool completion object
 
+instance RadosWriter AtomicWrite () where
+    writeChunk offset buffer = do
+        op <- ask
+        liftIO $ I.writeOperationWrite op buffer offset
+
+    writeFull buffer = do
+        op <- ask
+        liftIO $ I.writeOperationWriteFull op buffer
+
+    append buffer = do
+        op <- ask
+        liftIO $ I.writeOperationAppend op buffer
+
+    remove = do
+        op <- ask
+        liftIO $ I.writeOperationRemove op
+
+instance AtomicWriter (Object Pool) (Maybe E.RadosError) where
+    runAtomicWrite (AtomicWrite action) = do
+        (object, pool) <- askObjectPool
+        liftIO $ do
+            op <- I.newWriteOperation
+            runReaderT action op
+            I.writeOperate op pool object
+
+instance AtomicWriter (Object Async) AsyncAction where
+    runAtomicWrite (AtomicWrite action) = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion ->
+            liftIO $ do
+                op <- I.newWriteOperation
+                runReaderT action op
+                I.asyncWriteOperate op pool completion object
+
 instance RadosReader (Object Pool) (Either E.RadosError) where
     readChunk len offset = do
         (object, pool) <- askObjectPool
@@ -190,7 +231,6 @@ instance RadosReader (Object Pool) (Either E.RadosError) where
 
     unWrap = return . id
     wrapFail = return . Left
-
 
 instance RadosReader (Object Async) AsyncRead where
     readChunk len offset = do

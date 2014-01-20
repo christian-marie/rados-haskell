@@ -56,6 +56,8 @@ module System.Rados.FFI
     c_rados_write_op_rmxattr,
     c_rados_write_op_create,
     c_rados_write_op_write,
+    c_rados_write_op_write_full,
+    c_rados_write_op_append,
     c_rados_write_op_remove,
     c_rados_write_op_operate,
     c_rados_aio_write_op_operate,
@@ -376,6 +378,21 @@ foreign import ccall unsafe "librados.h rados_write_op_write"
         :: Ptr RadosWriteOpT
         -> CString
         -> CSize
+        -> Word64
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_write_full"
+    c_rados_write_op_write_full
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> CSize
+        -> IO ()
+
+foreign import ccall unsafe "librados.h rados_write_op_append"
+    c_rados_write_op_append
+        :: Ptr RadosWriteOpT
+        -> CString
+        -> CSize
         -> IO ()
 
 foreign import ccall unsafe "librados.h rados_write_op_remove"
@@ -389,7 +406,7 @@ foreign import ccall unsafe "librados.h rados_write_op_operate"
         -> Ptr RadosIOCtxT
         -> CString
         -> Ptr CTime
-        -> IO ()
+        -> IO (CInt)
 
 foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
     c_rados_aio_write_op_operate
@@ -398,4 +415,4 @@ foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
         -> Ptr RadosCompletionT
         -> CString
         -> Ptr CTime
-        -> IO ()
+        -> IO (CInt)

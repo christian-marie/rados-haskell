@@ -7,6 +7,7 @@ module System.Rados.Internal
     Connection,
     Completion,
     Pool,
+    WriteOperation,
     F.TimeVal(..),
     F.LockFlag,
 -- *Connecting
@@ -49,7 +50,10 @@ module System.Rados.Internal
     writeOperationSetXAttribute,
     writeOperationRemoveXAttribute,
     writeOperationCreate,
+    writeOperationRemove,
     writeOperationWrite,
+    writeOperationWriteFull,
+    writeOperationAppend,
     writeOperate,
     asyncWriteOperate,
 ) where
@@ -652,34 +656,63 @@ writeOperationCreate (WriteOperation o) exclusive =
         let int_exclusive = if exclusive then 1 else 0 in
             F.c_rados_write_op_create ofp int_exclusive nullPtr
 
+writeOperationRemove
+    :: WriteOperation
+    -> IO () 
+writeOperationRemove (WriteOperation o) =
+    withForeignPtr o $ \ofp ->
+        F.c_rados_write_op_remove ofp 
+
 writeOperationWrite
     :: WriteOperation
     -> B.ByteString
+    -> Word64
     -> IO ()
-writeOperationWrite (WriteOperation o) buffer = 
+writeOperationWrite (WriteOperation o) buffer offset = 
     withForeignPtr o $ \ofp ->
     B.useAsCStringLen buffer $ \(c_buf, c_len) ->
-        F.c_rados_write_op_write ofp c_buf (fromIntegral c_len)
+        F.c_rados_write_op_write ofp c_buf (fromIntegral c_len) offset
+
+writeOperationWriteFull
+    :: WriteOperation
+    -> B.ByteString
+    -> IO ()
+writeOperationWriteFull (WriteOperation o) buffer = 
+    withForeignPtr o $ \ofp ->
+    B.useAsCStringLen buffer $ \(c_buf, c_len) ->
+        F.c_rados_write_op_write_full ofp c_buf (fromIntegral c_len)
+
+
+writeOperationAppend
+    :: WriteOperation
+    -> B.ByteString
+    -> IO ()
+writeOperationAppend (WriteOperation o) buffer = 
+    withForeignPtr o $ \ofp ->
+    B.useAsCStringLen buffer $ \(c_buf, c_len) ->
+        F.c_rados_write_op_append ofp c_buf (fromIntegral c_len)
 
 writeOperate
     :: WriteOperation
     -> Pool
     -> B.ByteString
-    -> IO ()
+    -> IO (Maybe RadosError)
 writeOperate (WriteOperation o) (Pool ioctx_p) oid = 
     withForeignPtr o $ \ofp ->
     B.useAsCString oid $ \c_oid->
-        F.c_rados_write_op_operate ofp ioctx_p c_oid nullPtr
+        maybeError "rados_write_op_operate" $
+            F.c_rados_write_op_operate ofp ioctx_p c_oid nullPtr
 
 asyncWriteOperate
     :: WriteOperation
     -> Pool
     -> Completion
     -> B.ByteString
-    -> IO () 
+    -> IO (Either RadosError Int) 
 asyncWriteOperate (WriteOperation o) (Pool ioctx_p)
                   (Completion rados_completion_t_fp) oid =
     withForeignPtr o $ \ofp ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
     B.useAsCString oid $ \c_oid->
-        F.c_rados_aio_write_op_operate ofp ioctx_p cmp_p c_oid nullPtr
+        checkError' "rados_aio_write_op_operate" $
+            F.c_rados_aio_write_op_operate ofp ioctx_p cmp_p c_oid nullPtr
