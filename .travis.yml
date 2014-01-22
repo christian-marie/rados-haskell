@@ -2,13 +2,11 @@ language: haskell
 env:
   - 'UBUNTU_RELEASE=saucy GHCVER=7.4.1'
   - 'UBUNTU_RELEASE=saucy GHCVER=7.4.2'
-  - 'UBUNTU_RELEASE=saucy GHCVER=7.4.3'
   - 'UBUNTU_RELEASE=saucy GHCVER=7.6.1'
   - 'UBUNTU_RELEASE=saucy GHCVER=7.6.2'
   - 'UBUNTU_RELEASE=saucy GHCVER=7.6.3'
   - 'UBUNTU_RELEASE=trusty GHCVER=7.4.1'
   - 'UBUNTU_RELEASE=trusty GHCVER=7.4.2'
-  - 'UBUNTU_RELEASE=trusty GHCVER=7.4.3'
   - 'UBUNTU_RELEASE=trusty GHCVER=7.6.1'
   - 'UBUNTU_RELEASE=trusty GHCVER=7.6.2'
   - 'UBUNTU_RELEASE=trusty GHCVER=7.6.3'
