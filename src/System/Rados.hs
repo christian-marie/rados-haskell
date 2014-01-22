@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -41,13 +42,14 @@ module System.Rados
     waitSafe,
     look,
     runObject,
+#if defined(ATOMIC_WRITES)
     runAtomicWrite,
     -- * Extra atomic operations
     assertExists,
     compareXAttribute,
     I.eq, I.ne, I.gt, I.gte, I.lt, I.lte, I.nop,
     setXAttribute,
-
+#endif
     -- * Reading
     readChunk,
     readFull,
@@ -110,8 +112,10 @@ newtype Object parent a = Object (ReaderT B.ByteString parent a)
 newtype Async a = Async (ReaderT I.Pool IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
 
+#if defined(ATOMIC_WRITES)
 newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.WriteOperation)
+#endif
 
 data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
 data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
@@ -137,6 +141,7 @@ class Monad m => RadosWriter m e | m -> e where
     append :: B.ByteString -> m e
     remove :: m e
 
+#if defined(ATOMIC_WRITES)
 class Monad m => AtomicWriter m e | m -> e where
     -- | Must be run within an Object monad, this will run all writes
     -- atomically. The writes will be queued up, and on execution of the monad
@@ -158,6 +163,7 @@ class Monad m => AtomicWriter m e | m -> e where
     -- isNothing <$> waitSafe e
     -- @
     runAtomicWrite :: AtomicWrite a -> m e
+#endif
 
 class Monad m => RadosReader m wrapper | m -> wrapper where
     readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
@@ -210,6 +216,7 @@ instance RadosWriter (Object Async) AsyncAction where
         withActionCompletion $ \completion -> 
             liftIO $ I.asyncRemove pool completion object
 
+#if defined(ATOMIC_WRITES)
 instance RadosWriter AtomicWrite () where
     writeChunk offset buffer = do
         op <- ask
@@ -243,6 +250,7 @@ instance AtomicWriter (Object Async) AsyncAction where
                 op <- I.newWriteOperation
                 runReaderT action op
                 I.asyncWriteOperate op pool completion object
+#endif
 
 instance RadosReader (Object Pool) (Either E.RadosError) where
     readChunk len offset = do
@@ -484,6 +492,7 @@ withLock oid name (Pool user_action) lock_action = do
         (I.unlock pool oid name cookie)
         (runReaderT user_action pool)
 
+#if defined(ATOMIC_WRITES)
 assertExists :: AtomicWrite ()
 assertExists = do
     op <- ask
@@ -498,4 +507,4 @@ setXAttribute :: B.ByteString -> B.ByteString -> AtomicWrite ()
 setXAttribute key value = do
     op <- ask
     liftIO $ I.writeOperationSetXAttribute op key value
-
+#endif

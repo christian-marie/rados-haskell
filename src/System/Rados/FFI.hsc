@@ -1,5 +1,6 @@
 {-# LANGUAGE EmptyDataDecls           #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE CPP #-}
 
 module System.Rados.FFI
 where
@@ -29,17 +30,6 @@ type RadosCallbackT = FunPtr RadosCallback
 
 newtype LockFlag = LockFlag { unLockFlag :: Word8 }
 #{enum LockFlag, LockFlag, idempotent = LIBRADOS_LOCK_FLAG_RENEW }
-
-newtype ComparisonFlag = ComparisonFlag { unComparisonFlag :: Word8 }
-#{enum ComparisonFlag, ComparisonFlag,
-    nop = LIBRADOS_CMPXATTR_OP_NOP,
-    eq  = LIBRADOS_CMPXATTR_OP_EQ,
-    ne  = LIBRADOS_CMPXATTR_OP_NE,
-    gt  = LIBRADOS_CMPXATTR_OP_GT,
-    gte = LIBRADOS_CMPXATTR_OP_GTE,
-    lt  = LIBRADOS_CMPXATTR_OP_LT,
-    lte = LIBRADOS_CMPXATTR_OP_LTE
-}
 
 data TimeVal = TimeVal
     { seconds      :: CLong 
@@ -270,6 +260,19 @@ foreign import ccall unsafe "getProgArgv"
         :: Ptr CInt
         -> Ptr (Ptr CString)
         -> IO ()
+
+#if defined(ATOMIC_WRITES)
+newtype ComparisonFlag = ComparisonFlag { unComparisonFlag :: Word8 }
+#{enum ComparisonFlag, ComparisonFlag,
+    nop = LIBRADOS_CMPXATTR_OP_NOP,
+    eq  = LIBRADOS_CMPXATTR_OP_EQ,
+    ne  = LIBRADOS_CMPXATTR_OP_NE,
+    gt  = LIBRADOS_CMPXATTR_OP_GT,
+    gte = LIBRADOS_CMPXATTR_OP_GTE,
+    lt  = LIBRADOS_CMPXATTR_OP_LT,
+    lte = LIBRADOS_CMPXATTR_OP_LTE
+}
+
 foreign import ccall unsafe "librados.h rados_create_write_op"
     c_rados_create_write_op
         :: IO (Ptr RadosWriteOpT)
@@ -356,3 +359,4 @@ foreign import ccall unsafe "librados.h rados_aio_write_op_operate"
         -> CString
         -> Ptr CTime
         -> IO (CInt)
+#endif

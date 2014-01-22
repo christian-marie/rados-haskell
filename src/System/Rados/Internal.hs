@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 -- |
 -- The underlying Base methods used for the monadic implementation
 -- "System.Rados.Monadic".
@@ -7,10 +8,8 @@ module System.Rados.Internal
     Connection,
     Completion,
     Pool,
-    WriteOperation,
     F.TimeVal(..),
     F.LockFlag,
-    F.ComparisonFlag,
 -- *Connecting
     newConnection,
     cleanupConnection,
@@ -44,7 +43,10 @@ module System.Rados.Internal
     sharedLock,
     unlock,
     F.idempotent,
+#if defined(ATOMIC_WRITES)
 -- ** Atomic write operations
+    WriteOperation,
+    F.ComparisonFlag,
     newWriteOperation,
     writeOperationAssertExists,
     writeOperationCompareXAttribute,
@@ -58,6 +60,7 @@ module System.Rados.Internal
     writeOperationAppend,
     writeOperate,
     asyncWriteOperate,
+#endif
 ) where
 
 import System.Rados.Error
@@ -82,9 +85,11 @@ newtype Pool = Pool (Ptr F.RadosIOCtxT)
 newtype Completion = Completion (ForeignPtr F.RadosCompletionT)
     deriving (Ord, Eq)
 
+#if defined(ATOMIC_WRITES)
 -- | A write operation groups many individal operations together to be executed
 -- atomically
 newtype WriteOperation = WriteOperation (ForeignPtr F.RadosWriteOpT)
+# endif
 
 -- |
 -- Attempt to create a new 'Connection, taking an optional id.
@@ -603,6 +608,7 @@ unlock (Pool ioctx_p) oid name cookie =
                              c_name
                              c_cookie
 
+#if defined(ATOMIC_WRITES)
 newWriteOperation
     :: IO WriteOperation
 newWriteOperation = 
@@ -684,7 +690,6 @@ writeOperationWriteFull (WriteOperation o) buffer =
     B.useAsCStringLen buffer $ \(c_buf, c_len) ->
         F.c_rados_write_op_write_full ofp c_buf (fromIntegral c_len)
 
-
 writeOperationAppend
     :: WriteOperation
     -> B.ByteString
@@ -718,3 +723,4 @@ asyncWriteOperate (WriteOperation o) (Pool ioctx_p)
     B.useAsCString oid $ \c_oid->
         checkError' "rados_aio_write_op_operate" $
             F.c_rados_aio_write_op_operate ofp ioctx_p cmp_p c_oid nullPtr
+#endif

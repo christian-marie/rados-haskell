@@ -9,6 +9,7 @@
 -- the BSD licence.
 --
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -33,11 +34,13 @@ suite = do
         testDeleteObject
         testPutObjectAsync
         testGetObjectAsync
+#if defined(ATOMIC_WRITES)
         testDeleteObject
         testPutObjectAtomic
         testGetObject
         testDeleteObject
         testPutObjectAtomicAsync
+#endif
     
     describe "Locking" $ do
         testSharedLock
@@ -49,7 +52,10 @@ runTestPool =
 
 testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
 testGetObjectAsync, testPutObjectAsync, testSharedLock :: Spec
-testExclusiveLock, testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
+testExclusiveLock :: Spec
+#if defined(ATOMIC_WRITES)
+testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
+#endif
 
 testConnectionHost =
     it "able to establish connetion to local Ceph cluster" $ do
@@ -92,6 +98,7 @@ testGetObjectAsync =
         r' <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readFull >>= look
         either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
 
+#if defined(ATOMIC_WRITES)
 testPutObjectAtomicAsync =
     it "atomically writes data" $ do
         e <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
@@ -109,6 +116,7 @@ testPutObjectAtomic =
             writeFull "schrodinger's hai?\n"
             writeChunk 14 "cat"
         assertBool "Write failed" (isNothing e)
+#endif
 
 testSharedLock =
     it "locks and unlocks quickly" $ do
