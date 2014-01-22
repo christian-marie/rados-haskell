@@ -13,11 +13,11 @@
 -- Stability   : experimental
 -- Portability : non-portable
 --
--- librados haskell binding, covers asynchronous read/writes, locks and atomic
--- writes.
+-- Bindings to librados, covers async read/writes, locks and atomic
+-- writes (build flag).
 --
 -- This is the monadic API, you may use the underlying internals or FFI calls
--- via 'System.Rados.Internal' and 'System.Rados.FFI'
+-- via "System.Rados.Internal" and "System.Rados.FFI".
 --
 -- A simple complete example:
 --
@@ -33,7 +33,7 @@
 --         runPool \"magic_pool\" . runObject \"an oid\" $ do
 --             writeFull \"hello kitty!\"
 --             readFull
---     either throwIO B.putStrLn kitty
+--     either throwIO B.putStrLn (kitty :: Either RadosError B.ByteString)
 -- @
 --
 module System.Rados
@@ -58,7 +58,7 @@ module System.Rados
     -- @
     -- runOurPool $ do
     --     a1 \<- runObject \"object\" $ readFull
-    --     a2 \<- runAsync . runObject \"object\" $ readChunk 42 6
+    --     a2 \<- runAsync . runObject \"object\" $ readFull
     --     a3 \<- look a2
     --     a1 :: Either RadosError ByteString
     --     a2 :: AsyncRead ByteString
@@ -66,9 +66,7 @@ module System.Rados
     -- @
 
     -- ** Reading API
-    readChunk,
-    readFull,
-    stat,
+    RadosReader(readChunk, readFull, stat),
     -- * Writing
     -- ** A note on signatures
     --
@@ -91,10 +89,7 @@ module System.Rados
     -- @
 
     -- ** Writing API
-    writeChunk,
-    writeFull,
-    append,
-    remove,
+    RadosWriter(..),
     -- * Asynchronous requests
     runAsync,
     waitSafe,
@@ -112,21 +107,22 @@ module System.Rados
     withExclusiveLock,
     withSharedLock,
     -- * Types
+    -- ** Data types
+    StatResult,
+    fileSize,
+    modifyTime,
+    AsyncRead,
+    AsyncWrite,
     -- ** Monads
     Connection,
     Pool,
     Object,
     Async,
-    -- ** Data types
-    StatResult,
-    fileSize,
-    modifyTime,
-    -- *Exceptions
+    -- ** Exceptions
     -- |
     -- This library should never throw an error within runPool, runPool itself
     -- may throw a 'RadosError' should it have a problem opening the given
-    -- pool. Any exception thrown within runPool will be thrown all the way out
-    -- to 'IO'.
+    -- pool.
     E.RadosError(..),
 )
 where
@@ -166,8 +162,12 @@ newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
     deriving (Functor, Monad, MonadIO, MonadReader I.WriteOperation)
 #endif
 
-data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
+-- | A write request in flight, access a possible error with 'waitSafe'
+data AsyncWrite = ActionFailure E.RadosError | ActionInFlight I.Completion
+-- | A read request in flight, access the contents of the read with 'look'
 data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
+-- | The result of a 'stat', access the contents with 'modifyTime' and
+-- 'fileSize'
 data StatResult = StatResult Word64 EpochTime
                 | StatInFlight (ForeignPtr Word64) (ForeignPtr EpochTime)
     deriving (Typeable)
@@ -188,7 +188,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- writeChunk :: Word64 -> ByteString -> Object Pool (Maybe RadosError)
-    -- writeChunk :: Word64 -> ByteString -> Object Async AsyncAction
+    -- writeChunk :: Word64 -> ByteString -> Object Async AsyncWrite
     -- @
     writeChunk
         :: Word64          -- ^ Offset to write at
@@ -201,7 +201,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- writeFull :: ByteString -> Object Pool (Maybe RadosError)
-    -- writeFull :: ByteString -> Object Async AsyncAction
+    -- writeFull :: ByteString -> Object Async AsyncWrite
     -- @
     writeFull :: B.ByteString -> m e
 
@@ -211,7 +211,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- append :: ByteString -> Object Pool (Maybe RadosError)
-    -- append :: ByteString -> Object Async AsyncAction
+    -- append :: ByteString -> Object Async AsyncWrite
     -- @
     append :: B.ByteString -> m e
 
@@ -221,7 +221,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- remove :: Object Pool (Maybe RadosError)
-    -- remove :: Object Async AsyncAction
+    -- remove :: Object Async AsyncWrite
     -- @
     remove :: m e
 
@@ -312,7 +312,7 @@ instance RadosWriter (Object Pool) (Maybe E.RadosError) where
         (object, pool) <- askObjectPool
         liftIO $ I.syncRemove pool object
 
-instance RadosWriter (Object Async) AsyncAction where
+instance RadosWriter (Object Async) AsyncWrite where
     writeChunk offset buffer = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
@@ -359,7 +359,7 @@ instance AtomicWriter (Object Pool) (Maybe E.RadosError) where
             runReaderT action op
             I.writeOperate op pool object
 
-instance AtomicWriter (Object Async) AsyncAction where
+instance AtomicWriter (Object Async) AsyncWrite where
     runAtomicWrite (AtomicWrite action) = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion ->
@@ -406,11 +406,26 @@ instance RadosReader (Object Async) AsyncRead where
     wrapFail = return . ReadFailure
 
 askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
-askObjectPool = do
+askObjectPool =
     liftM2 (,) ask (Object . lift $ ask)
 
+-- | Wait until a Rados write has hit stable storage on all replicas, you will
+-- only know if a write has been successful when you inspect the AsyncWrite
+-- with waitSafe.
+--
+-- Provides a Maybe RadosError.
+--
+-- @
+-- runOurPool . runAsync . runObject \"a box\" $ do
+--   async_request \<- writeFull \"schrodinger's hai?\\n\"
+--   liftIO $ putStrLn "Write is in flight!"
+--   maybe_error <- waitSafe async_request
+--   case maybe_error of
+--      Just e  -> liftIO $ print e
+--      Nothing -> return ()
+-- @
 waitSafe :: (RadosWriter m e, MonadIO m)
-            => AsyncAction -> m (Maybe E.RadosError)
+            => AsyncWrite -> m (Maybe E.RadosError)
 waitSafe async_request =
     case async_request of
         ActionFailure e ->
@@ -421,6 +436,16 @@ waitSafe async_request =
                 I.getAsyncError completion 
             return $ either Just (const Nothing) e
 
+-- | Take an 'AsyncRead' a and provide Either RadosError a
+-- This function is used for retrieving the value of an async read.
+--
+-- @
+-- runOurPool . runAsync . runObject \"a box\" $ do
+--   async_read \<- readFull
+--   liftIO $ putStrLn "Request is in flight!"
+--   either_error_or_read \<- look async_read
+--   either (liftIO . throwIO) BS.putStrLn  either_error_or_read
+-- @
 look :: (RadosReader m e, MonadIO m, Typeable a)
      => AsyncRead a -> m (Either E.RadosError a)
 look async_request =
@@ -444,47 +469,37 @@ look async_request =
                         Just bs -> fromJust . cast $ B.take n bs
                         Nothing -> a
 
--- | Run an action with a completion, cleaning up on failure, stashing in
--- state otherwise.
-withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncAction
+-- | Run an action with a completion.
+withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncWrite
 withActionCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
-    case result of
-        Left e -> return $ ActionFailure e
-        Right _ -> do
-            return $ ActionInFlight completion
+    return $ case result of
+        Left e  -> ActionFailure e
+        Right _ -> ActionInFlight completion
     
--- | Run an action with a completion, cleaning up on failure, stashing in
--- state otherwise.
+-- | Run an read with a completion
 withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async (AsyncRead a)
 withReadCompletion f = do
     completion <- liftIO I.newCompletion
     result <- liftIO $ f completion
-    case result of
-        Left e -> return $ ReadFailure e
-        Right a -> do
-            return $ ReadInFlight completion a
+    return $ case result of
+        Left e -> ReadFailure e
+        Right a -> ReadInFlight completion a
 
 -- |
--- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
---
--- First argument is an optional user to connect as.
---
--- Second argument is an action that configures the handle prior to connection.
---
--- Third argument is the action to run with the connection made.
+-- Run an action within the 'Connection' monad, this may throw a RadosError to
+-- IO if the connection or configuration fails.
 --
 -- @
--- runConnect (parseConfig \"ceph.conf\") $ do
---     ...
+-- runConnect (parseConfig \"ceph.conf\") $ runPool ...
 -- @
 runConnect
-    :: Maybe B.ByteString
-    -> (I.Connection -> IO (Maybe E.RadosError))
+    :: Maybe B.ByteString                        -- ^ Optional user name
+    -> (I.Connection -> IO (Maybe E.RadosError)) -- ^ Configuration function
     -> Connection a
     -> IO a
-runConnect user configure (Connection action) = do
+runConnect user configure (Connection action) =
     bracket
         (do h <- I.newConnection user
             conf <- configure h
@@ -499,8 +514,8 @@ runConnect user configure (Connection action) = do
         (runReaderT action)
 
 -- |
--- Open a 'Pool' with ceph and perform an action with it, cleaning up with
--- 'bracket'.
+--
+-- Run an action within the 'Pool' monad.
 --
 -- This may throw a RadosError to IO if the pool cannot be opened.
 --
@@ -517,23 +532,24 @@ runPool pool (Pool action) = do
     liftIO $ bracket
         (I.newPool connection pool)
         I.cleanupPool
-        (\p -> runReaderT action p)
+        (runReaderT action)
 
 -- |
--- runObject is a convenience/readability monad to store the provide object id
--- and provide it to read and write actions.
+-- Run an action within the 'Object m' monad, where m is the caller's context.
+--
 -- @
--- runOurPool . runObject \"an oid\" readFull
+-- (runOurPool . runObject \"an oid\" :: Object Pool a -> IO a
+-- (runOurPool . runAsync . runObject \"an oid\") :: Object Async a -> IO a
 -- @
 runObject :: B.ByteString -> Object m a -> m a
-runObject object_id (Object action) = do
+runObject object_id (Object action) =
     runReaderT action object_id
 
 -- |
 -- Any read/writes within this monad will be run asynchronously.
 --
 -- Return values of reads and writes are wrapped within 'AsyncRead' or
--- 'AsyncAction' respectively. You should extract the actual value from a read
+-- 'AsyncWrite' respectively. You should extract the actual value from a read
 -- via 'look' and 'waitSafe'.
 --
 -- The asynchronous nature of error handling means that if you fail to inspect
@@ -549,27 +565,31 @@ runObject object_id (Object action) = do
 -- @
 runAsync :: Async a -> Pool a
 runAsync (Async action) = do
+    -- We merely re-wrap the pool.
     pool <- ask
     liftIO $ runReaderT action pool
 
---- |
--- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
+-- | Read a config from a relative or absolute 'FilePath' into a 'Connection'.
 --
 -- Intended for use with 'runConnect'.
 parseConfig :: FilePath -> I.Connection -> IO (Maybe E.RadosError)
 parseConfig = flip I.confReadFile
 
+-- | Read a config from the command line, note that no help flag will be
+-- provided.
 parseArgv :: I.Connection -> IO (Maybe E.RadosError)
 parseArgv = I.confParseArgv
 
+-- | Parse the contents of the environment variable CEPH_ARGS as if they were
+-- ceph command line options.
 parseEnv :: I.Connection -> IO (Maybe E.RadosError)
 parseEnv = I.confParseEnv
 
--- | Perform an action with an exclusive lock on oid
+-- | Perform an action with an exclusive lock.
 withExclusiveLock
     :: B.ByteString    -- ^ Object ID
     -> B.ByteString    -- ^ Name of lock
-    -> B.ByteString    -- ^ Description of lock
+    -> B.ByteString    -- ^ Description of lock (debugging)
     -> Maybe Double    -- ^ Optional duration of lock
     -> Pool a          -- ^ Action to perform with lock
     -> Pool a
@@ -577,12 +597,12 @@ withExclusiveLock oid name desc duration action =
     withLock oid name action $ \pool cookie -> 
         I.exclusiveLock pool oid name cookie desc duration []
 
--- | Perform an action with an shared lock on oid and tag
+-- | Perform an action with an shared lock.
 withSharedLock
     :: B.ByteString    -- ^ Object ID
     -> B.ByteString    -- ^ Name of lock
-    -> B.ByteString    -- ^ Description of lock
-    -> B.ByteString    -- ^ Tag for shared lock
+    -> B.ByteString    -- ^ Description of lock (debugging)
+    -> B.ByteString    -- ^ Tag for lock holder (debugging)
     -> Maybe Double    -- ^ Optional duration of lock
     -> Pool a          -- ^ Action to perform with lock
     -> Pool a

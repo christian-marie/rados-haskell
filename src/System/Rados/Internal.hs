@@ -1,7 +1,9 @@
 {-# LANGUAGE CPP #-}
 -- |
--- The underlying Base methods used for the monadic implementation
--- "System.Rados.Monadic".
+-- The underlying methods used for the monadic implementation "System.Rados".
+--
+-- These can be a bit of a pain to use as they are thin wrappers around the C
+-- API, you will need to do a lot of cleanup yourself.
 module System.Rados.Internal
 (
 -- *Type definitions
@@ -344,10 +346,10 @@ asyncAppend (Pool ioctxt_p) (Completion rados_completion_t_fp) oid bs =
             ioctxt_p c_oid cmp_p c_buf c_size
 
 -- |
--- Same calling convention as asyncWriteFull, simply appends to an object.
+-- Remove an object, calls rados_aio_remove
 --
 -- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_remove>
 asyncRemove
     :: Pool
     -> Completion
@@ -356,7 +358,7 @@ asyncRemove
 asyncRemove (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
     B.useAsCString oid $ \c_oid ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
-        checkError' "rados_aio_append" $ F.c_rados_aio_remove
+        checkError' "rados_aio_remove" $ F.c_rados_aio_remove
             ioctxt_p c_oid cmp_p
 
 -- |
