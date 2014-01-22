@@ -44,6 +44,57 @@ module System.Rados
     parseArgv,
     parseEnv,
     runPool,
+    -- * Reading
+    -- ** A note on signatures
+    --
+    -- |In order to use these functions in any RadosReader monad, the type
+    -- signatures have been made generic.
+    --
+    -- This allows the same API to be used for synchronous and asynchronous
+    -- requests.
+    --
+    -- Thus, a1 and a2 below have different signatures:
+    --
+    -- @
+    -- runOurPool $ do
+    --     a1 <- runObject \"object\" $ readFull
+    --     a2 <- runAsync . runObject \"object\" $ readChunk 42 6
+    --     a3 <- look a2
+    --     a1 :: Either RadosError ByteString
+    --     a2 :: AsyncRead ByteString
+    --     a3 :: Either RadosError ByteString
+    -- @
+
+    -- ** Reading API
+    readChunk,
+    readFull,
+    stat,
+    -- * Writing
+    -- ** A note on signatures
+    --
+    -- |In order to use these functions in any RadosWriter monad, the type
+    -- signatures have been made generic.
+    --
+    -- This allows the same API to be used for synchronous and asynchronous
+    -- requests.
+    --
+    -- Thus, a1 and a2 below have different signatures:
+    --
+    -- @
+    -- runOurPool $ do
+    --     a1 <- runObject \"object\" $ writeFull "hai!"
+    --     a2 <- runAsync . runObject \"object\" $ writeFull "hai!"
+    --     a3 <- waitSafe a2
+    --     a1 :: Maybe RadosError
+    --     a2 :: AsyncWrite
+    --     a3 :: Maybe RadosError
+    -- @
+
+    -- ** Writing API
+    writeChunk,
+    writeFull,
+    append,
+    remove,
     -- * Asynchronous requests
     runAsync,
     waitSafe,
@@ -57,15 +108,6 @@ module System.Rados
     I.eq, I.ne, I.gt, I.gte, I.lt, I.lte, I.nop,
     setXAttribute,
 #endif
-    -- * Reading
-    readChunk,
-    readFull,
-    stat,
-    -- * Writing
-    writeChunk,
-    writeFull,
-    append,
-    remove,
     -- * Locking
     withExclusiveLock,
     withSharedLock,
@@ -140,12 +182,47 @@ modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
 class Monad m => RadosWriter m e | m -> e where
+    -- | Write a chunk of data
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- writeChunk :: Word64 -> ByteString -> Object Pool (Maybe RadosError)
+    -- writeChunk :: Word64 -> ByteString -> Object Async AsyncAction
+    -- @
     writeChunk
-        :: Word64          -- ^ Offset
-        -> B.ByteString    -- ^ Data to write
-        -> m e             -- ^ Possible error, see: "System.Rados#signatures"
+        :: Word64          -- ^ Offset to write at
+        -> B.ByteString    -- ^ Bytes to write
+        -> m e
+
+    -- | Atomically replace an object
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- writeFull :: ByteString -> Object Pool (Maybe RadosError)
+    -- writeFull :: ByteString -> Object Async AsyncAction
+    -- @
     writeFull :: B.ByteString -> m e
+
+    -- | Append to the end of an object
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- append :: ByteString -> Object Pool (Maybe RadosError)
+    -- append :: ByteString -> Object Async AsyncAction
+    -- @
     append :: B.ByteString -> m e
+
+    -- | Delete an object
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- remove :: Object Pool (Maybe RadosError)
+    -- remove :: Object Async AsyncAction
+    -- @
     remove :: m e
 
 #if defined(ATOMIC_WRITES)
@@ -173,12 +250,45 @@ class Monad m => AtomicWriter m e | m -> e where
 #endif
 
 class Monad m => RadosReader m wrapper | m -> wrapper where
-    readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
+    -- | Read a chunk of data.
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- readChunk :: Word64 -> Word64 -> Object Pool (Either RadosError ByteString)
+    -- readChunk :: Word64 -> Word64 -> Object Async (AsyncRead ByteString)
+    -- @
+    readChunk
+        :: Word64 -- ^ Number of bytes to read
+        -> Word64 -- ^ Offset to read from
+        -> m (wrapper B.ByteString)
 
+    -- | Read all avaliable data.
+    --
+    -- This is implemented with a stat followed by a read.
+    --
+    -- If you call this within the Object Async monad, the async request will
+    -- wait for the result of the stat. The read itself will still be
+    -- asynchronous.
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- readFull :: Object Pool (Either RadosError ByteString)
+    -- readFull :: Object Async (AsyncRead ByteString)
+    -- @
     readFull :: m (wrapper B.ByteString)
     readFull =
         stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
 
+    -- | Retrive the file size and mtime of an object
+    --
+    -- The possible types of this function are:
+    --
+    -- @
+    -- stat :: Object Pool (Either RadosError StatResult)
+    -- stat :: Object Async (AsyncRead StatResult)
+    -- @
     stat :: m (wrapper StatResult)
 
     unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
@@ -428,8 +538,6 @@ runObject object_id (Object action) = do
 --
 -- The asynchronous nature of error handling means that if you fail to inspect
 -- asynchronous writes with 'waitSafe', you will never know if they failed.
---
--- If you fail to inspect a read, well, you're a special kind of odd.
 --
 -- @
 -- runOurPool . runAsync . runObject \"a box\" $ do
