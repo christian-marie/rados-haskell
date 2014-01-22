@@ -5,32 +5,39 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
+-- |
+-- Module      : System.Rados
+-- Copyright   : (c) 2010-2014 Anchor
+-- License     : BSD-3
+-- Maintainer  : Christian Marie <christian@ponies.io>
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- librados haskell binding, covers asynchronous read/writes, locks and atomic
+-- writes.
+--
+-- This is the monadic API, you may use the underlying internals or FFI calls
+-- via 'System.Rados.Internal' and 'System.Rados.FFI'
+--
+-- A simple complete example:
+--
+-- @
+-- {-\# LANGUAGE OverloadedStrings \#-}
+-- module Main where
+-- import System.Rados
+-- import Control.Exception
+-- import qualified Data.ByteString.Char8 as B
+-- main :: IO ()
+-- main = do
+--     kitty \<- runConnect Nothing (parseConfig \"ceph.conf\") $
+--         runPool \"magic_pool\" . runObject \"an oid\" $ do
+--             writeFull \"hello kitty!\"
+--             readFull
+--     either throwIO B.putStrLn kitty
+-- @
+--
 module System.Rados
 (
-    -- |
-    -- * General usage
-    --
-    -- There are a series of convenience monads to avoid you having to carry
-    -- around state yourself:
-    --
-    -- @
-    -- writeRead :: IO ByteString
-    -- writeRead =
-    --     runConnect Nothing (parseConfig \"ceph.conf\") $
-    --         runPool connection \"magic_pool\" $
-    --             runObject \"oid\" $
-    --                 writeFull \"hai!\"
-    -- @
-    --
-    -- A note on reading signatures:
-    --
-    -- #signatures#
-    -- In order to have the same reading and writing API presented to you
-    -- within 'Async', 'Pool' and 'Atomic' monads, the return value the basic
-    -- read/write functions are not fixed.
-    --
-    -- The return value wrappers are documented in the 'runObject', 'runAsync'
-    -- and 'runAtomicWrite' sections.
     -- * Initialization
     runConnect,
     parseConfig,
@@ -413,19 +420,19 @@ runObject object_id (Object action) = do
     runReaderT action object_id
 
 -- |
--- Any read/writes within this context will be run asynchronously, a
--- runAtomicWrite run within this monad will also run that atomic write
--- asynchronously.
+-- Any read/writes within this monad will be run asynchronously.
 --
 -- Return values of reads and writes are wrapped within 'AsyncRead' or
--- 'AsyncAction' respectively. You may extract the actual value from a read via
--- 'look' and 'waitSafe'.
+-- 'AsyncAction' respectively. You should extract the actual value from a read
+-- via 'look' and 'waitSafe'.
 --
--- The asynchronous nature of execution here means that if you fail to inspect
+-- The asynchronous nature of error handling means that if you fail to inspect
 -- asynchronous writes with 'waitSafe', you will never know if they failed.
 --
+-- If you fail to inspect a read, well, you're a special kind of odd.
+--
 -- @
--- runOurPool . runAsync $ runObject \"a box\" $ do
+-- runOurPool . runAsync . runObject \"a box\" $ do
 --   wr <- writeFull \"schrodinger's hai?\\n\"
 --   writeChunk 14 \"cat\" -- Don't care about the cat.
 --   print . isNothing \<$\> waitSafe wr
