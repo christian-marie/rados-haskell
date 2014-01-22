@@ -6,11 +6,12 @@ module System.Rados.Error
     checkError,
     checkError',
     checkError_,
+    maybeError,
     checkErrorRetryBusy_,
 ) where
 
 import Control.Exception
-import Control.Monad (void)
+import Control.Monad.Error
 import Data.Typeable
 import Foreign.C.Error
 import Foreign.C.String
@@ -19,15 +20,45 @@ import System.Rados.FFI as F
 
 -- | An error indicated by librados, usually in the form of a negative return
 -- value
-data RadosError = RadosError
-    { errno     :: Int    -- ^ Error number (positive)
-    , cFunction :: String -- ^ The underlying C function that called
-    , strerror  :: String -- ^ The \"nice\" error message from @strerror@
-    } deriving (Eq, Ord, Typeable)
+data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
+                           , cFunction :: String -- ^ The underlying C function
+                           , strerror  :: String -- ^ The \"nice\" error message.
+                           }
+                -- | Usually returned if a file does not exist
+                | NoEntity { errno     :: Int    
+                           , cFunction :: String 
+                           , strerror  :: String
+                           }
+                -- | Returned if a file already exists, and should not.
+                | Exists   { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
+                           }
+                -- | Returned in the event of a failed atomic transaction
+                | Canceled { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
+                           }
+                -- | A value was out of range, returned when reading or writing
+                -- from/to invalid regions.
+                | Range    { errno     :: Int
+                           , cFunction :: String
+                           , strerror  :: String
+                           }
+                | User     { message :: String }
+    deriving (Eq, Ord, Typeable)
+
+
+instance Error RadosError where
+    strMsg err = User err
 
 instance Show RadosError where
-    show RadosError{..} = "rados-haskell: rados error in '" ++
+    show Unknown{..} = "rados: unknown rados error in '" ++
         cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
+    show NoEntity{..} = cFunction ++ ": ENOENT: '" ++ strerror ++ "'"
+    show Exists{..} = cFunction ++ ": EEXIST: '" ++ strerror ++ "'"
+    show Canceled{..} = cFunction ++ ": ECANCELED: '" ++ strerror ++ "'"
+    show Range{..} = cFunction ++ ": ERANGE: '" ++ strerror ++ "'"
 
 instance Exception RadosError
 
@@ -48,8 +79,19 @@ checkError' function action = do
         then do
             let errno = (-n)
             strerror <- peekCString =<< F.c_strerror (Errno errno)
-            return $ Left $ RadosError (fromIntegral errno) function strerror
-        else return $ Right $ fromIntegral n
+            return . Left $ makeError (fromIntegral errno) function strerror
+        else return . Right $ fromIntegral n
+
+maybeError :: String -> IO CInt -> IO (Maybe RadosError)
+maybeError function action =
+    checkError' function action >>= either (return . Just) (const $ return Nothing)
+
+makeError :: Int -> String -> String -> RadosError
+makeError 125 fun str = Canceled 125 fun str
+makeError 2 fun str   = NoEntity 2 fun str
+makeError 17 fun str  = Exists 17 fun str
+makeError 34 fun str  = Range 34 fun str
+makeError n fun str   = Unknown n fun str
 
 checkError_ :: String -> IO CInt -> IO ()
 checkError_ function action = void $ checkError function action

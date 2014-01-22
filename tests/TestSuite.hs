@@ -9,28 +9,18 @@
 -- the BSD licence.
 --
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS -fno-warn-unused-imports #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module TestSuite where
 
 import Test.Hspec
 import Test.HUnit
 
---
--- Otherwise redundent imports, but useful for testing in GHCi.
---
-
-import Control.Monad
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as S
-import qualified Data.ByteString.Lazy as L
-import Debug.Trace
-
---
--- What we're actually testing.
---
-
+import Control.Exception (throwIO, try, SomeException)
+import Data.Maybe
+import Control.Applicative
 import System.Rados
 
 suite :: Spec
@@ -42,44 +32,109 @@ suite = do
         testPutObject
         testGetObject
         testDeleteObject
+        testPutObjectAsync
+        testGetObjectAsync
+#if defined(ATOMIC_WRITES)
+        testDeleteObject
+        testPutObjectAtomic
+        testGetObject
+        testDeleteObject
+        testPutObjectAtomicAsync
+#endif
     
     describe "Locking" $ do
-        testLockWithoutOID
+        testSharedLock
+        testExclusiveLock
 
-withTestPool :: (Pool -> IO a) -> IO a
-withTestPool f = 
-        withConnection Nothing (readConfig "/etc/ceph/ceph.conf") $ \connection ->
-            withPool connection "test1" f
+runTestPool :: Pool a -> IO a
+runTestPool = 
+    runConnect Nothing (parseConfig "/etc/ceph/ceph.conf") . runPool "test1"
 
 testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
-testLockWithoutOID :: Spec
+testGetObjectAsync, testPutObjectAsync, testSharedLock :: Spec
+testExclusiveLock :: Spec
+#if defined(ATOMIC_WRITES)
+testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
+#endif
+
 testConnectionHost =
-    it "able to establish connetion to local Ceph cluster" $
-        withTestPool $ (\pool -> return $ pool `seq` ()) 
+    it "able to establish connetion to local Ceph cluster" $ do
+        runTestPool $ return ()
+        assertBool "Failed" True
 
 
 testPutObject =
-    it "write object accepted by storage cluster" $
-        withTestPool $ \pool -> do
-                syncWriteFull pool "test/TestSuite.hs" "schrodinger's hai?\n"
-                syncWrite pool "test/TestSuite.hs" 14 "cat"
-                assertBool "Failed" True
+    it "write object accepted by storage cluster" $ do
+        runTestPool . runObject "test/TestSuite.hs" $ do
+            writeFull "schrodinger's hai?\n"
+            writeChunk 14 "cat"
+        assertBool "Failed" True
 
 testGetObject =
-    it "read object returns correct data" $
-        withTestPool $ \pool -> do
-            x' <- syncRead pool "test/TestSuite.hs" 0 1024
-            assertEqual "Incorrect content read" "schrodinger's cat?\n" x'
+    it "read object returns correct data" $ do
+        a <- runTestPool $ runObject "test/TestSuite.hs" $ readChunk 32 0
+        either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") a
+        (Right b) <- runTestPool . runObject "test/TestSuite.hs" $ readFull
+        assertEqual "Incorrect content readFull" "schrodinger's cat?\n" b
 
 testDeleteObject =
-    it "deletes the object afterward" $
-        withTestPool $ \pool -> do
-            syncRemove pool "test/TestSuite.hs"
-            assertBool "Failed" True
+    it "deletes the object afterward" $ do
+        runTestPool $ runObject "test/TestSuite.hs" remove
+        assertBool "Failed" True
 
-testLockWithoutOID =
-    it "locks and unlocks quickly" $
-        withTestPool $ \pool -> do
-            replicateM_ 100 $ 
-                withExclusiveLock pool "locked" "name" "desc" (Just 1) $
-                    assertBool "Failed" True
+testPutObjectAsync =
+    it "write object accepted by storage cluster" $ do
+        runTestPool . runAsync $ runObject "test/TestSuite.hs" $ do
+            wr <- writeFull "schrodinger's hai?\n"
+            print . isNothing <$> waitSafe wr
+            wr' <- writeChunk 14 "cat"
+            waitSafe wr'
+        assertBool "Failed" True
+
+testGetObjectAsync =
+    it "read object returns correct data" $ do
+        r <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readChunk 32 0 >>= look
+        either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r
+        r' <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ readFull >>= look
+        either throwIO (assertEqual "readChunk" "schrodinger's cat?\n") r'
+
+#if defined(ATOMIC_WRITES)
+testPutObjectAtomicAsync =
+    it "atomically writes data" $ do
+        e <- runTestPool . runAsync . runObject "test/TestSuite.hs" $ do
+            write <- runAtomicWrite $ do
+                setXAttribute "Pony" "blue"
+                compareXAttribute "Pony" eq "pink"
+                writeFull "schrodinger's hai?\n"
+                writeChunk 14 "cat"
+            waitSafe write
+        assertBool "Write did not fail" (isJust e)
+        
+testPutObjectAtomic =
+    it "atomically writes data" $ do
+        e <- runTestPool . runObject "test/TestSuite.hs" . runAtomicWrite $ do
+            writeFull "schrodinger's hai?\n"
+            writeChunk 14 "cat"
+        assertBool "Write failed" (isNothing e)
+#endif
+
+testSharedLock =
+    it "locks and unlocks quickly" $ do
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 4.3) $
+                error "Bang!"
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 60) $
+            withSharedLock "test/TestSuite.hs" "lock" "description" "tag" (Just 60) $
+                error "Bang again!"
+        assertBool "No deadlock" True
+
+testExclusiveLock =
+    it "locks and unlocks quickly" $ do
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withExclusiveLock "test/TestSuite.hs" "lock" "description" (Just 4.3) $
+                error "Bang!"
+        (_ :: Either SomeException a) <- try $ runTestPool $
+            withExclusiveLock "test/TestSuite.hs" "lock" "description" (Just 4.3) $
+                error "Bang!"
+        assertBool "No deadlock" True

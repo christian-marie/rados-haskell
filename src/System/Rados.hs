@@ -1,77 +1,353 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FunctionalDependencies #-}
+
 module System.Rados
 (
-    -- *Types
-    I.Connection,
-    I.Pool,
-    I.TimeVal(..),
-    -- *Exceptions
     -- |
-    -- This library should only ever throw a 'RadosError'.
+    -- * General usage
     --
-    -- You can handle this with something like:
-    --
-    -- @
-    -- main = tryHai \`catch\` (\\e -> putStrLn $ strerror e )
-    --   where tryHai = withConnection Nothing (readConfig \"/dev/null\")
-    --                                         (\\_ -> putStrLn \"hai\")
-    -- @
-    E.RadosError(..),
-    -- *General usage
-    -- |
-    -- Write an object and then read it back:
+    -- There are a series of convenience monads to avoid you having to carry
+    -- around state yourself:
     --
     -- @
     -- writeRead :: IO ByteString
     -- writeRead =
-    --     withConnection Nothing (readConfig \"ceph.conf\") $ \\connection ->
-    --         withPool connection \"magic_pool\" $ \\pool -> do
-    --             syncWriteFull pool \"oid\" \"hai!\"
-    --             syncRead pool \"oid\" 0 4
+    --     runConnect Nothing (parseConfig \"ceph.conf\") $
+    --         runPool connection \"magic_pool\" $
+    --             runObject \"oid\" $
+    --                 writeFull \"hai!\"
     -- @
-    withConnection,
-    withPool,
-    -- *Syncronous IO
-    I.syncRead,
-    I.syncWrite,
-    I.syncWriteFull,
-    I.syncAppend,
-    I.syncRemove,
-    -- *Asynchronous IO
-    -- ** Async monad
+    --
+    -- A note on reading signatures:
+    --
+    -- #signatures#
+    -- In order to have the same reading and writing API presented to you
+    -- within 'Async', 'Pool' and 'Atomic' monads, the return value the basic
+    -- read/write functions are not fixed.
+    --
+    -- The return value wrappers are documented in the 'runObject', 'runAsync'
+    -- and 'runAtomicWrite' sections.
+    -- * Initialization
+    runConnect,
+    parseConfig,
+    parseArgv,
+    parseEnv,
+    runPool,
+    -- * Asynchronous requests
     runAsync,
-    -- ** Completion functions
-    allComplete,
-    allSafe,
-    -- ** Async functions
-    asyncWrite,
-    asyncWriteFull,
-    asyncAppend,
-    -- *Configuration
-    readConfig,
-    -- *Locking
+    waitSafe,
+    look,
+    runObject,
+#if defined(ATOMIC_WRITES)
+    runAtomicWrite,
+    -- * Extra atomic operations
+    assertExists,
+    compareXAttribute,
+    I.eq, I.ne, I.gt, I.gte, I.lt, I.lte, I.nop,
+    setXAttribute,
+#endif
+    -- * Reading
+    readChunk,
+    readFull,
+    stat,
+    -- * Writing
+    writeChunk,
+    writeFull,
+    append,
+    remove,
+    -- * Locking
     withExclusiveLock,
-    withIdempotentExclusiveLock,
     withSharedLock,
-    withIdempotentSharedLock,
+    -- * Types
+    -- ** Monads
+    Connection,
+    Pool,
+    Object,
+    Async,
+    -- ** Data types
+    StatResult,
+    fileSize,
+    modifyTime,
+    -- *Exceptions
+    -- |
+    -- This library should never throw an error within runPool, runPool itself
+    -- may throw a 'RadosError' should it have a problem opening the given
+    -- pool. Any exception thrown within runPool will be thrown all the way out
+    -- to 'IO'.
+    E.RadosError(..),
 )
 where
 
-import Control.Exception (bracket, bracket_)
+import Control.Exception (bracket, bracket_, throwIO)
 import Control.Monad.State
+import Control.Monad.Reader
 import Control.Applicative
+import Data.Word (Word64)
+import System.Posix.Types(EpochTime)
+import Foreign.ForeignPtr
+import Foreign.Storable
+import System.IO.Unsafe
+import Data.Typeable
+import Data.Maybe
 
 import qualified Data.ByteString.Char8 as B
-import Data.Either
-import Data.Word
 import qualified System.Rados.Error as E
 import qualified System.Rados.Internal as I
 import Data.UUID
 import Data.UUID.V4
 
-newtype Async a = Async (StateT [Either E.RadosError I.Completion] IO a)
-    deriving (Monad, MonadIO, MonadState [Either E.RadosError I.Completion])
+newtype Connection a = Connection (ReaderT I.Connection IO a)
+    deriving (Monad, MonadIO, MonadReader I.Connection)
+
+newtype Pool a = Pool (ReaderT I.Pool IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
+
+newtype Object parent a = Object (ReaderT B.ByteString parent a)
+    deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
+
+newtype Async a = Async (ReaderT I.Pool IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
+
+#if defined(ATOMIC_WRITES)
+newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
+    deriving (Functor, Monad, MonadIO, MonadReader I.WriteOperation)
+#endif
+
+data AsyncAction = ActionFailure E.RadosError | ActionInFlight I.Completion
+data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
+data StatResult = StatResult Word64 EpochTime
+                | StatInFlight (ForeignPtr Word64) (ForeignPtr EpochTime)
+    deriving (Typeable)
+
+-- Make reading a StatResult transparent
+
+fileSize :: StatResult -> Word64
+fileSize (StatResult s _) = s
+fileSize (StatInFlight s _) = unsafePerformIO $ withForeignPtr s peek
+modifyTime :: StatResult -> EpochTime
+modifyTime (StatResult _ m) = m
+modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
+
+class Monad m => RadosWriter m e | m -> e where
+    writeChunk
+        :: Word64          -- ^ Offset
+        -> B.ByteString    -- ^ Data to write
+        -> m e             -- ^ Possible error, see: "System.Rados#signatures"
+    writeFull :: B.ByteString -> m e
+    append :: B.ByteString -> m e
+    remove :: m e
+
+#if defined(ATOMIC_WRITES)
+class Monad m => AtomicWriter m e | m -> e where
+    -- | Must be run within an Object monad, this will run all writes
+    -- atomically. The writes will be queued up, and on execution of the monad
+    -- will be sent to ceph in one batch request.
+    --
+    -- @
+    -- e <- runOurPool . runObject \"hi\" . runAtomicWrite $ do
+    --     remove
+    --     writeChunk 42 "fourty-two"
+    -- isNothing e
+    -- @
+    --
+    -- Or for async:
+    --
+    -- @
+    -- e <- runOurPool . runAsync . runObject \"hi\" . runAtomicWrite $ do
+    --     remove
+    --     writeChunk 42 "fourty-two"
+    -- isNothing <$> waitSafe e
+    -- @
+    runAtomicWrite :: AtomicWrite a -> m e
+#endif
+
+class Monad m => RadosReader m wrapper | m -> wrapper where
+    readChunk :: Word64 -> Word64 -> m (wrapper B.ByteString)
+
+    readFull :: m (wrapper B.ByteString)
+    readFull =
+        stat >>= unWrap >>= either wrapFail (\r -> readChunk  (fileSize r) 0)
+
+    stat :: m (wrapper StatResult)
+
+    unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
+
+    wrapFail :: E.RadosError -> m (wrapper a)
+
+instance RadosWriter (Object Pool) (Maybe E.RadosError) where
+    writeChunk offset buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncWrite pool object offset buffer
+
+    writeFull buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncWriteFull pool object buffer
+
+    append buffer = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncAppend pool object buffer
+
+    remove = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncRemove pool object
+
+instance RadosWriter (Object Async) AsyncAction where
+    writeChunk offset buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncWrite pool completion object offset buffer
+
+    writeFull buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncWriteFull pool completion object buffer
+
+    append buffer = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncAppend pool completion object buffer
+
+    remove = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion -> 
+            liftIO $ I.asyncRemove pool completion object
+
+#if defined(ATOMIC_WRITES)
+instance RadosWriter AtomicWrite () where
+    writeChunk offset buffer = do
+        op <- ask
+        liftIO $ I.writeOperationWrite op buffer offset
+
+    writeFull buffer = do
+        op <- ask
+        liftIO $ I.writeOperationWriteFull op buffer
+
+    append buffer = do
+        op <- ask
+        liftIO $ I.writeOperationAppend op buffer
+
+    remove = do
+        op <- ask
+        liftIO $ I.writeOperationRemove op
+
+instance AtomicWriter (Object Pool) (Maybe E.RadosError) where
+    runAtomicWrite (AtomicWrite action) = do
+        (object, pool) <- askObjectPool
+        liftIO $ do
+            op <- I.newWriteOperation
+            runReaderT action op
+            I.writeOperate op pool object
+
+instance AtomicWriter (Object Async) AsyncAction where
+    runAtomicWrite (AtomicWrite action) = do
+        (object, pool) <- askObjectPool
+        withActionCompletion $ \completion ->
+            liftIO $ do
+                op <- I.newWriteOperation
+                runReaderT action op
+                I.asyncWriteOperate op pool completion object
+#endif
+
+instance RadosReader (Object Pool) (Either E.RadosError) where
+    readChunk len offset = do
+        (object, pool) <- askObjectPool
+        liftIO $ I.syncRead pool object len offset
+
+    stat = do
+        (object, pool) <- askObjectPool
+        liftIO $ do
+            s <- I.syncStat pool object
+            return $ case s of
+                Left e -> Left e
+                Right (size, time) -> Right $ StatResult size time
+
+    unWrap = return . id
+    wrapFail = return . Left
+
+instance RadosReader (Object Async) AsyncRead where
+    readChunk len offset = do
+        (object, pool) <- askObjectPool
+        withReadCompletion $ \completion -> 
+            liftIO $ I.asyncRead pool completion object len offset
+
+    stat = do
+        (object, pool) <- askObjectPool
+        withReadCompletion $ \completion ->
+            liftIO $ do
+                s <- I.asyncStat pool completion object
+                return $ case s of
+                    Left e ->
+                        Left e
+                    Right (size_fp, mtime_fp) ->
+                        Right $ StatInFlight size_fp mtime_fp
+        
+    unWrap = look
+    wrapFail = return . ReadFailure
+
+askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
+askObjectPool = do
+    liftM2 (,) ask (Object . lift $ ask)
+
+waitSafe :: (RadosWriter m e, MonadIO m)
+            => AsyncAction -> m (Maybe E.RadosError)
+waitSafe async_request =
+    case async_request of
+        ActionFailure e ->
+            return $ Just e
+        ActionInFlight completion -> do
+            e <- liftIO $ do
+                I.waitForSafe completion
+                I.getAsyncError completion 
+            return $ either Just (const Nothing) e
+
+look :: (RadosReader m e, MonadIO m, Typeable a)
+     => AsyncRead a -> m (Either E.RadosError a)
+look async_request =
+    case async_request of
+        ReadFailure e ->
+            return $ Left e
+        ReadInFlight completion a -> do
+            ret <- liftIO $ do
+                I.waitForSafe completion
+                I.getAsyncError completion 
+            return $ case ret of
+                Left e -> Left e
+                Right n -> Right $
+                    -- This is a hack to trim async bytestrings to the correct
+                    -- size on recieving the actual number of bytes read from
+                    -- getAsyncError. The casting is needed so that the user
+                    -- can simply use "look" to look at any read value, it just
+                    -- so happens that when the user looks at a ByteString
+                    -- value we magically trim it to the correct size.
+                    case (cast a :: Maybe B.ByteString) of
+                        Just bs -> fromJust . cast $ B.take n bs
+                        Nothing -> a
+
+-- | Run an action with a completion, cleaning up on failure, stashing in
+-- state otherwise.
+withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncAction
+withActionCompletion f = do
+    completion <- liftIO I.newCompletion
+    result <- liftIO $ f completion
+    case result of
+        Left e -> return $ ActionFailure e
+        Right _ -> do
+            return $ ActionInFlight completion
+    
+-- | Run an action with a completion, cleaning up on failure, stashing in
+-- state otherwise.
+withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async (AsyncRead a)
+withReadCompletion f = do
+    completion <- liftIO I.newCompletion
+    result <- liftIO $ f completion
+    case result of
+        Left e -> return $ ReadFailure e
+        Right a -> do
+            return $ ReadInFlight completion a
 
 -- |
 -- Run an action with a 'Connection' to ceph, cleanup is handled via 'bracket'.
@@ -83,169 +359,152 @@ newtype Async a = Async (StateT [Either E.RadosError I.Completion] IO a)
 -- Third argument is the action to run with the connection made.
 --
 -- @
--- withConnection (readConfig \"ceph.conf\") $ \\connection -> do
+-- runConnect (parseConfig \"ceph.conf\") $ do
 --     ...
 -- @
-withConnection
+runConnect
     :: Maybe B.ByteString
-    -> (I.Connection -> IO ()) -- configure action
-    -> (I.Connection -> IO a) -- user action
+    -> (I.Connection -> IO (Maybe E.RadosError))
+    -> Connection a
     -> IO a
-withConnection user configure=
+runConnect user configure (Connection action) = do
     bracket
         (do h <- I.newConnection user
-            configure h
-            I.connect h
-            return h)
+            conf <- configure h
+            case conf of
+                Just e -> do
+                    I.cleanupConnection h
+                    throwIO e
+                Nothing -> do
+                    I.connect h
+                    return h)
         I.cleanupConnection
+        (runReaderT action)
 
 -- |
 -- Open a 'Pool' with ceph and perform an action with it, cleaning up with
 -- 'bracket'.
 --
+-- This may throw a RadosError to IO if the pool cannot be opened.
+--
+-- For the following examples, we shall use:
+--
 -- @
--- ...
---     withPool connection \"pool42\" $ \\pool ->
---         ...
+-- runOurPool :: Pool a -> IO a
+-- runOurPool = 
+--     runConnect Nothing parseArgv . runPool "magic_pool"
 -- @
-withPool :: I.Connection -> B.ByteString -> (I.Pool -> IO a) -> IO a
-withPool connection pool =
-    bracket
+runPool :: B.ByteString -> Pool a -> Connection a
+runPool pool (Pool action) = do
+    connection <- ask
+    liftIO $ bracket
         (I.newPool connection pool)
         I.cleanupPool
+        (\p -> runReaderT action p)
+
+-- |
+-- runObject is a convenience/readability monad to store the provide object id
+-- and provide it to read and write actions.
+-- @
+-- runOurPool . runObject \"an oid\" readFull
+-- @
+runObject :: B.ByteString -> Object m a -> m a
+runObject object_id (Object action) = do
+    runReaderT action object_id
+
+-- |
+-- Any read/writes within this context will be run asynchronously, a
+-- runAtomicWrite run within this monad will also run that atomic write
+-- asynchronously.
+--
+-- Return values of reads and writes are wrapped within 'AsyncRead' or
+-- 'AsyncAction' respectively. You may extract the actual value from a read via
+-- 'look' and 'waitSafe'.
+--
+-- The asynchronous nature of execution here means that if you fail to inspect
+-- asynchronous writes with 'waitSafe', you will never know if they failed.
+--
+-- @
+-- runOurPool . runAsync $ runObject \"a box\" $ do
+--   wr <- writeFull \"schrodinger's hai?\\n\"
+--   writeChunk 14 \"cat\" -- Don't care about the cat.
+--   print . isNothing \<$\> waitSafe wr
+--   r <- readFull >>= look
+--   either throwIO print r
+-- @
+runAsync :: Async a -> Pool a
+runAsync (Async action) = do
+    pool <- ask
+    liftIO $ runReaderT action pool
 
 --- |
 -- Read a config from a relative or absolute 'FilePath' into a 'Connection'.
 --
--- Intended for use with 'withConnection'.
-readConfig :: FilePath -> I.Connection -> IO ()
-readConfig = flip I.confReadFile
+-- Intended for use with 'runConnect'.
+parseConfig :: FilePath -> I.Connection -> IO (Maybe E.RadosError)
+parseConfig = flip I.confReadFile
 
--- |
--- Run some write actions asyncronously, then wait on all of these actions
--- using a completion function.
---
--- You may chose how to wait on the actions run within the Async monad
--- when you provide a completion function, this function will iterate over
--- the internal completions associated with each action and wait
--- accordingly.
---
--- runAsync will not return until the completion function has returned and it
--- has cleaned up all resources.
---
--- The return value is a list of 'Maybe' 'RadosError', corresponding to the
--- possible errors associated with actions in the order of which they are
--- executed within the monad.
---
--- @
--- ...
---         runAsync allSafe $ do
---             asyncWriteFull pool \"oid2\" \"moar hai!\"
---             asyncWriteFull pool \"oid3\" \"simultaneous hais!\"
---         putStrLn \"oid2 and oid3 were written to stable storage\"
--- ...
--- @
-runAsync :: ([I.Completion] -> IO ()) -> Async a -> IO [Maybe E.RadosError]
-runAsync check (Async a) = do
-    (_, results) <- runStateT a []
-    errors <- forM results $ either (return . Just) I.getAsyncError
-    check $ rights results
-    mapM_ I.cleanupCompletion $ rights results
-    return errors
+parseArgv :: I.Connection -> IO (Maybe E.RadosError)
+parseArgv = I.confParseArgv
 
--- |
--- The same as 'syncWrite', but does not block.
-asyncWrite :: I.Pool -> B.ByteString -> Word64 -> B.ByteString -> Async ()
-asyncWrite pool oid offset buffer =
-    withCompletion $ \completion ->
-        I.asyncWrite pool completion oid offset buffer
--- |
--- The same as 'syncWriteFull', but does not block.
-asyncWriteFull :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
-asyncWriteFull pool oid buffer =
-    withCompletion $ \completion ->
-        I.asyncWriteFull pool completion oid buffer
-
--- |
--- The same as 'syncWriteAppend', but does not block.
-asyncAppend :: I.Pool -> B.ByteString -> B.ByteString -> Async ()
-asyncAppend pool oid buffer =
-    withCompletion $ \completion ->
-        I.asyncAppend pool completion oid buffer
-
-
--- | Run an action with a completion, cleaning up on failure, stashing in
--- state otherwise.
-withCompletion :: (I.Completion -> IO (Either E.RadosError Int)) -> Async ()
-withCompletion f = do
-    completion <- liftIO I.newCompletion
-    result     <- liftIO $ f completion
-    case result of
-        -- Our async action either fails to launch at all, in which case we
-        -- have an error right now.
-        Left e -> do
-            liftIO $ I.cleanupCompletion completion
-            modify (\xs -> Left e:xs )
-        -- Or, it can fail later. In which case we will check it when the
-        -- monad chain is evaluated.
-        Right _ ->
-            modify (\xs -> Right completion:xs)
-
--- |
--- All actions are in memory on all replicas.
-allComplete :: [I.Completion] -> IO ()
-allComplete = mapM_ I.waitForComplete
-
--- |
--- All actions are in stable storage on all replicas.
-allSafe :: [I.Completion] -> IO ()
-allSafe = mapM_ I.waitForSafe
+parseEnv :: I.Connection -> IO (Maybe E.RadosError)
+parseEnv = I.confParseEnv
 
 -- | Perform an action with an exclusive lock on oid
-withExclusiveLock, withIdempotentExclusiveLock
-    :: I.Pool
-    -> B.ByteString    -- ^ oid
-    -> B.ByteString    -- ^ name
-    -> B.ByteString    -- ^ desc
-    -> Maybe I.TimeVal -- ^ duration
-    -> IO a
-    -> IO a
-withExclusiveLock pool oid name desc duration action =
-    withLock pool oid name action $ \cookie -> 
+withExclusiveLock
+    :: B.ByteString    -- ^ Object ID
+    -> B.ByteString    -- ^ Name of lock
+    -> B.ByteString    -- ^ Description of lock
+    -> Maybe Double    -- ^ Optional duration of lock
+    -> Pool a          -- ^ Action to perform with lock
+    -> Pool a
+withExclusiveLock oid name desc duration action =
+    withLock oid name action $ \pool cookie -> 
         I.exclusiveLock pool oid name cookie desc duration []
 
-withIdempotentExclusiveLock pool oid name desc duration action =
-    withLock pool oid name action $ \cookie -> 
-        I.exclusiveLock pool oid name cookie desc duration [I.idempotent]
 -- | Perform an action with an shared lock on oid and tag
-
-withSharedLock, withIdempotentSharedLock
-    :: I.Pool
-    -> B.ByteString    -- ^ oid
-    -> B.ByteString    -- ^ name
-    -> B.ByteString    -- ^ desc
-    -> B.ByteString    -- ^ tag
-    -> Maybe I.TimeVal -- ^ duration
-    -> IO a
-    -> IO a
-withSharedLock pool oid name desc tag duration action =
-    withLock pool oid name action $ \cookie -> 
+withSharedLock
+    :: B.ByteString    -- ^ Object ID
+    -> B.ByteString    -- ^ Name of lock
+    -> B.ByteString    -- ^ Description of lock
+    -> B.ByteString    -- ^ Tag for shared lock
+    -> Maybe Double    -- ^ Optional duration of lock
+    -> Pool a          -- ^ Action to perform with lock
+    -> Pool a
+withSharedLock oid name desc tag duration action =
+    withLock oid name action $ \pool cookie -> 
         I.sharedLock pool oid name cookie tag desc duration []
 
-withIdempotentSharedLock pool oid name desc tag duration action =
-    withLock pool oid name action $ \cookie ->
-        I.sharedLock pool oid name cookie tag desc duration [I.idempotent]
-
 withLock
-    :: I.Pool
+    :: B.ByteString
     -> B.ByteString
-    -> B.ByteString
-    -> IO b
-    -> (B.ByteString -> IO a)
-    -> IO b
-withLock pool oid name user_action lock_action = do
-    cookie <- B.pack . toString <$> nextRandom
-    bracket_
-        (lock_action cookie)
+    -> Pool a
+    -> (I.Pool -> B.ByteString -> IO b)
+    -> Pool a
+withLock oid name (Pool user_action) lock_action = do
+    pool <- ask
+    cookie <- liftIO $ B.pack . toString <$> nextRandom
+    -- Re-wrap user's action in a sub-ReaderT that is identical, this way we
+    -- can just use bracket_ to ensure the lock is cleaned up even if they
+    -- generate an exception.
+    liftIO $ bracket_
+        (lock_action pool cookie)
         (I.unlock pool oid name cookie)
-        user_action
+        (runReaderT user_action pool)
+
+#if defined(ATOMIC_WRITES)
+assertExists :: AtomicWrite ()
+assertExists = do
+    op <- ask
+    liftIO $ I.writeOperationAssertExists op
+
+compareXAttribute :: B.ByteString -> I.ComparisonFlag -> B.ByteString -> AtomicWrite ()
+compareXAttribute key operator value = do
+    op <- ask
+    liftIO $ I.writeOperationCompareXAttribute op key operator value
+
+setXAttribute :: B.ByteString -> B.ByteString -> AtomicWrite ()
+setXAttribute key value = do
+    op <- ask
+    liftIO $ I.writeOperationSetXAttribute op key value
+#endif
