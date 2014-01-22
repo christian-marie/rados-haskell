@@ -501,9 +501,9 @@ combineLockFlags :: [F.LockFlag] -> F.LockFlag
 combineLockFlags = F.LockFlag . foldr ((.|.) . F.unLockFlag) 0
 
 timeValFromRealFrac :: RealFrac n => n -> F.TimeVal
-timeValFromRealFrac n = do
-    let (seconds, fractional) = properFraction n
-    F.TimeVal seconds (floor $ 1000000 / fractional)
+timeValFromRealFrac n =
+    let (seconds, fractional) = properFraction n in
+        F.TimeVal seconds (floor $ 1000000 / fractional)
 -- |
 -- Make an exclusive lock
 exclusiveLock
