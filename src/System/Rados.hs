@@ -57,9 +57,9 @@ module System.Rados
     --
     -- @
     -- runOurPool $ do
-    --     a1 <- runObject \"object\" $ readFull
-    --     a2 <- runAsync . runObject \"object\" $ readChunk 42 6
-    --     a3 <- look a2
+    --     a1 \<- runObject \"object\" $ readFull
+    --     a2 \<- runAsync . runObject \"object\" $ readChunk 42 6
+    --     a3 \<- look a2
     --     a1 :: Either RadosError ByteString
     --     a2 :: AsyncRead ByteString
     --     a3 :: Either RadosError ByteString
@@ -82,9 +82,9 @@ module System.Rados
     --
     -- @
     -- runOurPool $ do
-    --     a1 <- runObject \"object\" $ writeFull "hai!"
-    --     a2 <- runAsync . runObject \"object\" $ writeFull "hai!"
-    --     a3 <- waitSafe a2
+    --     a1 \<- runObject \"object\" $ writeFull \"hai!\"
+    --     a2 \<- runAsync . runObject \"object\" $ writeFull \"hai!\"
+    --     a3 \<- waitSafe a2
     --     a1 :: Maybe RadosError
     --     a2 :: AsyncWrite
     --     a3 :: Maybe RadosError
