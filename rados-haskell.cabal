@@ -28,7 +28,7 @@ library
                        System.Rados.Internal
   other-modules:       System.Rados.Error
   other-extensions:    ForeignFunctionInterface
-  build-depends:       base >=4.6 && <4.7,
+  build-depends:       base >=3 && <5,
                        bytestring,
                        mtl,
                        containers,
@@ -45,7 +45,7 @@ library
 test-suite             check
   type:                exitcode-stdio-1.0
   other-extensions:    ForeignFunctionInterface
-  build-depends:       base >=4.6 && <4.7,
+  build-depends:       base >=3 && <5,
                        bytestring,
                        hspec,
                        HUnit,
@@ -61,7 +61,7 @@ benchmark locking
   hs-source-dirs:      bench
   main-is:             Locking.hs
   type:                exitcode-stdio-1.0
-  build-depends:       base >=4.6 && <4.7,
+  build-depends:       base >=3 && <5,
                        bytestring,
                        criterion,
                        async,
