@@ -399,7 +399,7 @@ runConnect user configure (Connection action) = do
 -- @
 -- runOurPool :: Pool a -> IO a
 -- runOurPool = 
---     runConnect Nothing parseArgv . runPool "magic_pool"
+--     runConnect Nothing parseArgv . runPool \"magic_pool\"
 -- @
 runPool :: B.ByteString -> Pool a -> Connection a
 runPool pool (Pool action) = do
@@ -436,7 +436,7 @@ runObject object_id (Object action) = do
 --   wr <- writeFull \"schrodinger's hai?\\n\"
 --   writeChunk 14 \"cat\" -- Don't care about the cat.
 --   print . isNothing \<$\> waitSafe wr
---   r <- readFull >>= look
+--   r \<- readFull \>>= look
 --   either throwIO print r
 -- @
 runAsync :: Async a -> Pool a
