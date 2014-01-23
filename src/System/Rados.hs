@@ -424,7 +424,7 @@ askObjectPool =
 --      Just e  -> liftIO $ print e
 --      Nothing -> return ()
 -- @
-waitSafe :: (RadosWriter m e, MonadIO m)
+waitSafe :: (MonadIO m)
             => AsyncWrite -> m (Maybe E.RadosError)
 waitSafe async_request =
     case async_request of
@@ -446,7 +446,7 @@ waitSafe async_request =
 --   either_error_or_read \<- look async_read
 --   either (liftIO . throwIO) BS.putStrLn  either_error_or_read
 -- @
-look :: (RadosReader m e, MonadIO m, Typeable a)
+look :: (MonadIO m, Typeable a)
      => AsyncRead a -> m (Either E.RadosError a)
 look async_request =
     case async_request of
