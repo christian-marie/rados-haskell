@@ -146,20 +146,20 @@ import Data.UUID
 import Data.UUID.V4
 
 newtype Connection a = Connection (ReaderT I.Connection IO a)
-    deriving (Monad, MonadIO, MonadReader I.Connection)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Connection)
 
 newtype Pool a = Pool (ReaderT I.Pool IO a)
-    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Pool)
 
 newtype Object parent a = Object (ReaderT B.ByteString parent a)
-    deriving (Functor, Monad, MonadIO, MonadReader B.ByteString)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.ByteString)
 
 newtype Async a = Async (ReaderT I.Pool IO a)
-    deriving (Functor, Monad, MonadIO, MonadReader I.Pool)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Pool)
 
 #if defined(ATOMIC_WRITES)
 newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
-    deriving (Functor, Monad, MonadIO, MonadReader I.WriteOperation)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.WriteOperation)
 #endif
 
 -- | A write request in flight, access a possible error with 'waitSafe'
