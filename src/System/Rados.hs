@@ -624,8 +624,19 @@ withLock oid name (Pool user_action) lock_action = do
     -- generate an exception.
     liftIO $ bracket_
         (lock_action pool cookie)
-        (I.unlock pool oid name cookie)
+        (tryUnlock pool oid name cookie)
         (runReaderT user_action pool)
+  where
+    -- Handle the case of a lock possibly expiring. It's okay not to be able to
+    -- remove a lock that does not exist.
+    tryUnlock pool oid name cookie = do
+        me <- I.unlock pool oid name cookie
+        case me of
+            Nothing -> return ()
+            Just (E.NoEntity _ _ _) -> return ()
+            Just e -> throwIO e
+
+
 
 #if defined(ATOMIC_WRITES)
 assertExists :: AtomicWrite ()

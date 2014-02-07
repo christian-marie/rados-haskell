@@ -599,12 +599,12 @@ unlock
     -> B.ByteString -- ^ oid
     -> B.ByteString -- ^ name
     -> B.ByteString -- ^ cookie
-    -> IO ()
+    -> IO (Maybe RadosError)
 unlock (Pool ioctx_p) oid name cookie =
     B.useAsCString oid    $ \c_oid ->
     B.useAsCString name   $ \c_name ->
     B.useAsCString cookie $ \c_cookie ->
-        checkError_ "c_rados_unlock" $
+        maybeError "c_rados_unlock" $
             F.c_rados_unlock ioctx_p
                              c_oid
                              c_name
