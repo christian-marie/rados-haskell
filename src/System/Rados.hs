@@ -93,6 +93,7 @@ module System.Rados
     -- * Asynchronous requests
     runAsync,
     waitSafe,
+    waitComplete,
     look,
     runObject,
 #if defined(ATOMIC_WRITES)
@@ -425,16 +426,27 @@ askObjectPool =
 --      Nothing -> return ()
 -- @
 waitSafe :: (MonadIO m)
-            => AsyncWrite -> m (Maybe E.RadosError)
-waitSafe async_request =
+         => AsyncWrite -> m (Maybe E.RadosError)
+waitSafe = waitAsync I.waitForSafe
+
+-- | Wait until a Rados write has hit memory on all replicas. This is less safe
+-- than waitSafe, but still pretty safe. Safe.
+waitComplete :: (MonadIO m)
+             => AsyncWrite -> m (Maybe E.RadosError)
+waitComplete = waitAsync I.waitForSafe
+
+waitAsync :: MonadIO m
+          => (I.Completion -> IO a) -> AsyncWrite -> m (Maybe E.RadosError)
+waitAsync f async_request =
     case async_request of
         ActionFailure e ->
             return $ Just e
         ActionInFlight completion -> do
             e <- liftIO $ do
-                I.waitForSafe completion
+                f completion
                 I.getAsyncError completion 
             return $ either Just (const Nothing) e
+
 
 -- | Take an 'AsyncRead' a and provide Either RadosError a
 -- This function is used for retrieving the value of an async read.
@@ -629,8 +641,8 @@ withLock oid name (Pool user_action) lock_action = do
   where
     -- Handle the case of a lock possibly expiring. It's okay not to be able to
     -- remove a lock that does not exist.
-    tryUnlock pool oid name cookie = do
-        me <- I.unlock pool oid name cookie
+    tryUnlock pool oid' name' cookie = do
+        me <- I.unlock pool oid' name' cookie
         case me of
             Nothing -> return ()
             Just (E.NoEntity _ _ _) -> return ()
