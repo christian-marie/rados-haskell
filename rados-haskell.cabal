@@ -57,13 +57,14 @@ test-suite             check
   default-language:    Haskell2010
   extra-libraries:     rados
 
-benchmark locking
+benchmark async
   hs-source-dirs:      bench
-  main-is:             Locking.hs
+  main-is:             Async.hs
   type:                exitcode-stdio-1.0
   build-depends:       base >=3 && <5,
                        bytestring,
                        criterion,
+                       transformers,
                        async,
                        rados-haskell
 

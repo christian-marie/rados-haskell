@@ -433,7 +433,7 @@ waitSafe = waitAsync I.waitForSafe
 -- than waitSafe, but still pretty safe. Safe.
 waitComplete :: (MonadIO m)
              => AsyncWrite -> m (Maybe E.RadosError)
-waitComplete = waitAsync I.waitForSafe
+waitComplete = waitAsync I.waitForComplete
 
 waitAsync :: MonadIO m
           => (I.Completion -> IO a) -> AsyncWrite -> m (Maybe E.RadosError)
