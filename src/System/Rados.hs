@@ -425,14 +425,12 @@ askObjectPool =
 --      Just e  -> liftIO $ print e
 --      Nothing -> return ()
 -- @
-waitSafe :: (MonadIO m)
-         => AsyncWrite -> m (Maybe E.RadosError)
+waitSafe :: MonadIO m => AsyncWrite -> m (Maybe E.RadosError)
 waitSafe = waitAsync I.waitForSafe
 
 -- | Wait until a Rados write has hit memory on all replicas. This is less safe
 -- than waitSafe, but still pretty safe. Safe.
-waitComplete :: (MonadIO m)
-             => AsyncWrite -> m (Maybe E.RadosError)
+waitComplete :: MonadIO m => AsyncWrite -> m (Maybe E.RadosError)
 waitComplete = waitAsync I.waitForComplete
 
 waitAsync :: MonadIO m
