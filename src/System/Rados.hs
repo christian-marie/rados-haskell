@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 -- |
 -- Module      : System.Rados
@@ -91,6 +92,7 @@ module System.Rados
     -- ** Writing API
     RadosWriter(..),
     -- * Asynchronous requests
+    async,
     runAsync,
     waitSafe,
     waitComplete,
@@ -139,7 +141,7 @@ import Foreign.Storable
 import System.IO.Unsafe
 import Data.Typeable
 import Data.Maybe
-
+import qualified Control.Concurrent.Async as A
 import qualified Data.ByteString.Char8 as B
 import qualified System.Rados.Error as E
 import qualified System.Rados.Internal as I
@@ -182,6 +184,9 @@ modifyTime :: StatResult -> EpochTime
 modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
+class (MonadReader I.Pool m, MonadIO m) => PoolReader m where
+    unPoolReader :: m a -> ReaderT I.Pool IO a
+
 class Monad m => RadosWriter m e | m -> e where
     -- | Write a chunk of data
     --
@@ -189,7 +194,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- writeChunk :: Word64 -> ByteString -> Object Pool (Maybe RadosError)
-    -- writeChunk :: Word64 -> ByteString -> Object Async AsyncWrite
+    -- writeChunk :: Word64 -> ByteString -> Object A.AsyncWrite
     -- @
     writeChunk
         :: Word64          -- ^ Offset to write at
@@ -202,7 +207,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- writeFull :: ByteString -> Object Pool (Maybe RadosError)
-    -- writeFull :: ByteString -> Object Async AsyncWrite
+    -- writeFull :: ByteString -> Object A.AsyncWrite
     -- @
     writeFull :: B.ByteString -> m e
 
@@ -212,7 +217,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- append :: ByteString -> Object Pool (Maybe RadosError)
-    -- append :: ByteString -> Object Async AsyncWrite
+    -- append :: ByteString -> Object A.AsyncWrite
     -- @
     append :: B.ByteString -> m e
 
@@ -222,7 +227,7 @@ class Monad m => RadosWriter m e | m -> e where
     --
     -- @
     -- remove :: Object Pool (Maybe RadosError)
-    -- remove :: Object Async AsyncWrite
+    -- remove :: Object A.AsyncWrite
     -- @
     remove :: m e
 
@@ -295,6 +300,12 @@ class Monad m => RadosReader m wrapper | m -> wrapper where
     unWrap :: Typeable a => wrapper a -> m (Either E.RadosError a)
 
     wrapFail :: E.RadosError -> m (wrapper a)
+
+instance PoolReader Async where
+    unPoolReader (Async a) = a
+
+instance PoolReader Pool where
+    unPoolReader (Pool a) = a
 
 instance RadosWriter (Object Pool) (Maybe E.RadosError) where
     writeChunk offset buffer = do
@@ -409,6 +420,20 @@ instance RadosReader (Object Async) AsyncRead where
 askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
 askObjectPool =
     liftM2 (,) ask (Object . lift $ ask)
+
+-- | Wrapper for the Control.Concurrent.Async library, you must be very careful
+-- to wait for the completion of all created async actions within the pool
+-- monad, or they will run with an invalid (cleaned up) context.
+--
+-- This will be rectified in future versions when reference counting is
+-- implemented, for now it is very unpolished and will require you to import
+-- qualified Control.Concurrent.Async.
+async :: PoolReader m => m a -> m (A.Async a) 
+async action = do
+    pool <- ask
+    -- Stick the pool within async
+    liftIO . A.async $ runReaderT (unPoolReader action) pool
+    -- TODO: Implement reference counting here and within runPool
 
 -- | Wait until a Rados write has hit stable storage on all replicas, you will
 -- only know if a write has been successful when you inspect the AsyncWrite
@@ -544,6 +569,7 @@ runPool pool (Pool action) = do
         I.cleanupPool
         (runReaderT action)
 
+
 -- |
 -- Run an action within the 'Object m' monad, where m is the caller's context.
 --
@@ -551,7 +577,8 @@ runPool pool (Pool action) = do
 -- (runOurPool . runObject \"an oid\" :: Object Pool a -> IO a
 -- (runOurPool . runAsync . runObject \"an oid\") :: Object Async a -> IO a
 -- @
-runObject :: B.ByteString -> Object m a -> m a
+runObject :: PoolReader m =>
+             B.ByteString -> Object m a -> m a
 runObject object_id (Object action) =
     runReaderT action object_id
 
@@ -573,7 +600,7 @@ runObject object_id (Object action) =
 --   r \<- readFull \>>= look
 --   either throwIO print r
 -- @
-runAsync :: Async a -> Pool a
+runAsync :: PoolReader m => Async a -> m a
 runAsync (Async action) = do
     -- We merely re-wrap the pool.
     pool <- ask

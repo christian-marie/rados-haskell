@@ -33,6 +33,7 @@ library
                        mtl,
                        containers,
                        uuid,
+                       async,
                        hspec
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -65,6 +66,22 @@ benchmark async
                        bytestring,
                        criterion,
                        transformers,
+                       mtl,
+                       rados-haskell
+
+  ghc-options:
+  default-language:    Haskell2010
+
+
+benchmark concurrency
+  hs-source-dirs:      bench
+  main-is:             Concurrency.hs
+  type:                exitcode-stdio-1.0
+  build-depends:       base >=3 && <5,
+                       bytestring,
+                       criterion,
+                       transformers,
+                       mtl,
                        async,
                        rados-haskell
 
