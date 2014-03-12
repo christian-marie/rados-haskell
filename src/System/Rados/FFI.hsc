@@ -84,7 +84,7 @@ foreign import ccall safe "librados.h rados_conf_parse_env"
                            -> CString
                            -> IO CInt
 
-foreign import ccall safe "librados.h rados_connect"
+foreign import ccall unsafe "librados.h rados_connect"
     c_rados_connect :: Ptr RadosT
                     -> IO CInt
 
