@@ -49,16 +49,11 @@ main = do
     defaultMain 
         [ bgroup "waitComplete"
             [ bench "1 concurrent" $ nfIO $ forAsyncs waitComplete oids 1
-            , bench "10 concurrent" $ nfIO $ forAsyncs waitComplete oids 10
-            , bench "100 concurrent" $ nfIO $ forAsyncs waitComplete oids 100
-            , bench "1000 concurrent" $ nfIO $ forAsyncs waitComplete oids 1000
-            , bench "10000 concurrent" $ nfIO $ forAsyncs waitComplete oids 10000
-            ]
-        , bgroup "waitSafe"
-            [ bench "1 concurrent" $ nfIO $ forAsyncs waitSafe oids 1
-            , bench "10 concurrent" $ nfIO $ forAsyncs waitSafe oids 10
-            , bench "100 concurrent" $ nfIO $ forAsyncs waitSafe oids 100
-            , bench "1000 concurrent" $ nfIO $ forAsyncs waitSafe oids 1000
-            , bench "10000 concurrent" $ nfIO $ forAsyncs waitSafe oids 10000
+            , bench "2 concurrent" $ nfIO $ forAsyncs waitComplete oids 2
+            , bench "4 concurrent" $ nfIO $ forAsyncs waitComplete oids 4
+            , bench "8 concurrent" $ nfIO $ forAsyncs waitComplete oids 8
+            , bench "16 concurrent" $ nfIO $ forAsyncs waitComplete oids 16
+            , bench "32 concurrent" $ nfIO $ forAsyncs waitComplete oids 32
+            , bench "64 concurrent" $ nfIO $ forAsyncs waitComplete oids 64
             ]
         ]

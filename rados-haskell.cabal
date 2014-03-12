@@ -53,6 +53,7 @@ test-suite             check
                        HUnit,
                        mtl,
                        uuid,
+                       async,
                        rados-haskell
   hs-source-dirs:      tests
   main-is:             check.hs

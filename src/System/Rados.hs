@@ -127,6 +127,8 @@ module System.Rados
     -- may throw a 'RadosError' should it have a problem opening the given
     -- pool.
     E.RadosError(..),
+    -- ** Re-exports
+    liftIO
 )
 where
 

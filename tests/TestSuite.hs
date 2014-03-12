@@ -9,8 +9,8 @@
 -- the BSD licence.
 --
 
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module TestSuite where
@@ -18,15 +18,22 @@ module TestSuite where
 import Test.Hspec
 import Test.HUnit
 
-import Control.Exception (throwIO, try, SomeException)
-import Data.Maybe
 import Control.Applicative
+import Control.Monad
+import qualified Control.Concurrent.Async as Async
+import Control.Concurrent
+import Control.Exception (SomeException, throwIO, try)
+import Data.Maybe
 import System.Rados
 
 suite :: Spec
 suite = do
+    describe "Thread safeness" $ do
+        testConnectBug
+
     describe "Connectivity" $ do
         testConnectionHost
+
 
     describe "Simple write/read round trips" $ do
         testPutObject
@@ -41,21 +48,29 @@ suite = do
         testDeleteObject
         testPutObjectAtomicAsync
 #endif
-    
+
     describe "Locking" $ do
         testSharedLock
         testExclusiveLock
 
 runTestPool :: Pool a -> IO a
-runTestPool = 
-    runConnect Nothing (parseConfig "/etc/ceph/ceph.conf") . runPool "test1"
+runTestPool =
+    runConnect Nothing (parseConfig "/etc/ceph/ceph.conf") . runPool "test"
 
 testConnectionHost, testPutObject, testGetObject, testDeleteObject :: Spec
-testGetObjectAsync, testPutObjectAsync, testSharedLock :: Spec
+testGetObjectAsync, testPutObjectAsync, testSharedLock, testConnectBug :: Spec
 testExclusiveLock :: Spec
 #if defined(ATOMIC_WRITES)
 testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
 #endif
+
+testConnectBug =
+    it "does not segfault" $ do
+        -- Make 100 connections at once
+        as <- replicateM 100 $
+            Async.async $ runTestPool $ return ()
+        mapM Async.wait as
+        assertBool "Failed" True
 
 testConnectionHost =
     it "able to establish connetion to local Ceph cluster" $ do
@@ -109,7 +124,7 @@ testPutObjectAtomicAsync =
                 writeChunk 14 "cat"
             waitSafe write
         assertBool "Write did not fail" (isJust e)
-        
+
 testPutObjectAtomic =
     it "atomically writes data" $ do
         e <- runTestPool . runObject "test/TestSuite.hs" . runAtomicWrite $ do
