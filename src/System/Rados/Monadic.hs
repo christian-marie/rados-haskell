@@ -446,7 +446,7 @@ async action = do
 -- @
 -- runOurPool . runAsync . runObject \"a box\" $ do
 --   async_request \<- writeFull \"schrodinger's hai?\\n\"
---   liftIO $ putStrLn "Write is in flight!"
+--   liftIO $ putStrLn \"Write is in flight!\"
 --   maybe_error <- waitSafe async_request
 --   case maybe_error of
 --      Just e  -> liftIO $ print e
@@ -479,7 +479,7 @@ waitAsync f async_request =
 -- @
 -- runOurPool . runAsync . runObject \"a box\" $ do
 --   async_read \<- readFull
---   liftIO $ putStrLn "Request is in flight!"
+--   liftIO $ putStrLn \"Request is in flight!\"
 --   either_error_or_read \<- look async_read
 --   either (liftIO . throwIO) BS.putStrLn  either_error_or_read
 -- @

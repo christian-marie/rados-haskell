@@ -6,10 +6,10 @@ version:             3.0.0
 synopsis:            librados haskell bindings
 description:         Covers the basics of the API.  
                      .
-		     The "Monadic" module is recommended for
+		     The "System.Rados.Monadic" module is recommended for
 		     safety/ease of use.
                      .
-		     The "Base" module is possibly more flexible
+		     The "System.Rados.Base" module is possibly more flexible
 		     but requires you to clean up your own resources and track
 		     a lot of state.
                      .
