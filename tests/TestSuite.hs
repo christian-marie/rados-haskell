@@ -24,7 +24,7 @@ import qualified Control.Concurrent.Async as Async
 import Control.Concurrent
 import Control.Exception (SomeException, throwIO, try)
 import Data.Maybe
-import System.Rados
+import System.Rados.Monadic
 
 suite :: Spec
 suite = do
@@ -66,8 +66,8 @@ testPutObjectAtomic, testPutObjectAtomicAsync :: Spec
 
 testConnectBug =
     it "does not segfault" $ do
-        -- Make 100 connections at once
-        as <- replicateM 100 $
+        -- Make 8 connections at once
+        as <- replicateM 8 $
             Async.async $ runTestPool $ return ()
         mapM Async.wait as
         assertBool "Failed" True

@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                rados-haskell
-version:             2.0.1
+version:             3.0.0
 synopsis:            librados haskell bindings
 -- description:         
 homepage:            github
@@ -23,9 +23,9 @@ Flag atomic_writes {
 
 
 library
-  exposed-modules:     System.Rados
-                       System.Rados.FFI
-                       System.Rados.Internal
+  exposed-modules:     System.Rados.FFI
+                       System.Rados.Base
+                       System.Rados.Monadic
   other-modules:       System.Rados.Error
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=3 && <5,

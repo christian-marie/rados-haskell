@@ -1,18 +1,31 @@
 {-# LANGUAGE CPP #-}
+
 -- |
--- The underlying methods used for the monadic implementation "System.Rados".
+-- Module      : System.Rados.Base
+-- Copyright   : (c) 2010-2014 Anchor
+-- License     : BSD-3
+-- Maintainer  : Christian Marie <christian@ponies.io>
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Bindings to librados, covers async read/writes, locks and atomic
+-- writes (build flag).
+--
+-- These are underlying functions used for the monadic implementation
+-- "System.Rados".
 --
 -- These can be a bit of a pain to use as they are thin wrappers around the C
 -- API, you will need to do a lot of cleanup yourself.
-module System.Rados.Internal
+module System.Rados.Base
 (
 -- *Type definitions
     Connection,
     Completion,
-    Pool,
+    IOContext,
     F.TimeVal(..),
     F.LockFlag,
 -- *Connecting
+    withConnection,
     newConnection,
     cleanupConnection,
     confReadFile,
@@ -20,8 +33,9 @@ module System.Rados.Internal
     confParseEnv,
     connect,
 -- *Writing
-    newPool,
-    cleanupPool,
+    withIOContext,
+    newIOContext,
+    cleanupIOContext,
 -- **Synchronous
     syncWrite,
     syncWriteFull,
@@ -69,19 +83,21 @@ import System.Rados.Error
 import qualified System.Rados.FFI as F
 
 import Control.Applicative
-import Control.Monad(void)
+import Control.Exception (bracket)
+import Control.Monad (void)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Unsafe as B
-import Foreign hiding (Pool, newPool, void)
+import Foreign hiding (void)
 import Foreign.C.String
 import Foreign.C.Types
-import System.Posix.Types(EpochTime)
+import System.Posix.Types (EpochTime)
 
--- | A connection to a rados cluster, required to get a 'Pool'
+-- | A connection to a rados cluster, required to get an 'IOContext'
 newtype Connection = Connection (Ptr F.RadosT)
 
 -- | An IO context with a rados pool.
-newtype Pool = Pool (Ptr F.RadosIOCtxT)
+newtype IOContext = IOContext (Ptr F.RadosIOCtxT)
 
 -- | A handle to query the status of an asynchronous action
 newtype Completion = Completion (ForeignPtr F.RadosCompletionT)
@@ -92,6 +108,17 @@ newtype Completion = Completion (ForeignPtr F.RadosCompletionT)
 -- atomically
 newtype WriteOperation = WriteOperation (ForeignPtr F.RadosWriteOpT)
 # endif
+
+-- |
+-- Perform an action given a 'Connection', cleans up with 'bracket'
+--
+-- @
+-- withConnection Nothing $ \c -> do
+--   confReadFile c \"\/etc\/config\"
+--   doStuff
+-- @
+withConnection :: Maybe ByteString -> (Connection -> IO a) -> IO a
+withConnection user = bracket (newConnection user) cleanupConnection
 
 -- |
 -- Attempt to create a new 'Connection, taking an optional id.
@@ -107,7 +134,7 @@ newtype WriteOperation = WriteOperation (ForeignPtr F.RadosWriteOpT)
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_create>
-newConnection :: Maybe B.ByteString -> IO Connection
+newConnection :: Maybe ByteString -> IO Connection
 newConnection maybe_bs =
     alloca $ \rados_t_p_p -> do
         checkError_ "rados_create" $ case maybe_bs of
@@ -175,33 +202,45 @@ connect :: Connection -> IO ()
 connect (Connection rados_t_p) =
     checkError_ "rados_connect" $ F.c_rados_connect rados_t_p
 
+
 -- |
--- Attempt to create a new 'Pool, requires a valid 'Connection and
+-- Perform an action given an 'IOContext', cleans up with 'bracket'
+--  @
+--  withConnection Nothing $ \c -> do
+--    confParseArgv c
+--    withIOContext c "pool_a" \ctx ->
+--      syncRemove ctx "an_object"
+--  @
+withIOContext :: Connection -> ByteString -> (IOContext -> IO a) -> IO a
+withIOContext c pool = bracket (newIOContext c pool) cleanupIOContext
+-- |
+-- Attempt to create a new 'IOContext', requires a valid 'Connection' and
 -- pool name.
 --
 -- @
 -- h <- newConnection Nothing
--- h ctx <- newPool h "thing"
--- cleanupPool ctx
+-- h ctx <- newIOContext h "thing"
+-- cleanupIOContext ctx
+-- cleanupConnection h
 -- @
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_create>
-newPool :: Connection -> B.ByteString -> IO Pool
-newPool (Connection rados_t_p) bs =
+newIOContext :: Connection -> ByteString -> IO IOContext
+newIOContext (Connection rados_t_p) bs =
     B.useAsCString bs $ \cstr ->
     alloca $ \ioctx_p_p -> do
         checkError_ "rados_ioctx_create" $
             F.c_rados_ioctx_create rados_t_p cstr ioctx_p_p
-        Pool <$> peek ioctx_p_p
+        IOContext <$> peek ioctx_p_p
 
 -- |
--- Clean up an Pool
+-- Clean up an IOContext
 --
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_ioctx_destroy>
-cleanupPool :: Pool -> IO ()
-cleanupPool (Pool p) = F.c_rados_ioctx_destroy p
+cleanupIOContext :: IOContext -> IO ()
+cleanupIOContext (IOContext p) = F.c_rados_ioctx_destroy p
 
 -- |
 -- Attempt to create a new 'Completion' that can be used with async IO actions.
@@ -252,18 +291,18 @@ waitForSafe (Completion rados_completion_t_fp) = void $
     withForeignPtr rados_completion_t_fp F.c_rados_aio_wait_for_complete
 
 getAsyncError :: Completion -> IO (Either RadosError Int)
-getAsyncError (Completion rados_completion_t_fp) = do
+getAsyncError (Completion rados_completion_t_fp) =
     checkError' "rados_aio_get_return_value" $
-        withForeignPtr rados_completion_t_fp $
+        withForeignPtr rados_completion_t_fp
             F.c_rados_aio_get_return_value
 
-asyncRead :: Pool
+asyncRead :: IOContext
           -> Completion
-          -> B.ByteString
+          -> ByteString
           -> Word64
           -> Word64
-          -> IO (Either RadosError B.ByteString)
-asyncRead (Pool ioctx_p) (Completion rados_completion_t_fp) oid len offset = do
+          -> IO (Either RadosError ByteString)
+asyncRead (IOContext ioctx_p) (Completion rados_completion_t_fp) oid len offset = do
     c_buf <- mallocBytes (fromIntegral len)
     B.useAsCString oid $ \c_oid -> do
         let c_len    = fromIntegral len
@@ -281,11 +320,11 @@ asyncRead (Pool ioctx_p) (Completion rados_completion_t_fp) oid len offset = do
 -- From right to left, this function reads as:
 --
 -- Write ByteString bytes to Word64 offset at oid ByteString, notifying this
--- Completion, all within this Pool
+-- Completion, all within this IOContext
 --
 -- @
 -- ...
--- ctx <- newPool h \"thing\"
+-- ctx <- newIOContext h \"thing\"
 -- asyncWrite ctx c "oid" 42 \"written at offset fourty-two\"
 -- putStrLn $ "I wrote " ++ show n ++ " bytes"
 -- @
@@ -293,13 +332,13 @@ asyncRead (Pool ioctx_p) (Completion rados_completion_t_fp) oid len offset = do
 -- Calls rados_aio_write:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write>
 asyncWrite
-    :: Pool
+    :: IOContext
     -> Completion
-    -> B.ByteString
+    -> ByteString
     -> Word64
-    -> B.ByteString
+    -> ByteString
     -> IO (Either RadosError Int)
-asyncWrite (Pool ioctxt_p) (Completion rados_completion_t_fp)
+asyncWrite (IOContext ioctxt_p) (Completion rados_completion_t_fp)
            oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
@@ -314,12 +353,12 @@ asyncWrite (Pool ioctxt_p) (Completion rados_completion_t_fp)
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_write_full>
 asyncWriteFull
-    :: Pool
+    :: IOContext
     -> Completion
-    -> B.ByteString
-    -> B.ByteString
+    -> ByteString
+    -> ByteString
     -> IO (Either RadosError Int)
-asyncWriteFull (Pool ioctxt_p) (Completion rados_completion_t_fp) oid bs =
+asyncWriteFull (IOContext ioctxt_p) (Completion rados_completion_t_fp) oid bs =
     B.useAsCString oid   $ \c_oid ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
@@ -333,12 +372,12 @@ asyncWriteFull (Pool ioctxt_p) (Completion rados_completion_t_fp) oid bs =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_append>
 asyncAppend
-    :: Pool
+    :: IOContext
     -> Completion
-    -> B.ByteString
-    -> B.ByteString
+    -> ByteString
+    -> ByteString
     -> IO (Either RadosError Int)
-asyncAppend (Pool ioctxt_p) (Completion rados_completion_t_fp) oid bs =
+asyncAppend (IOContext ioctxt_p) (Completion rados_completion_t_fp) oid bs =
     B.useAsCString oid        $ \c_oid ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
@@ -351,11 +390,11 @@ asyncAppend (Pool ioctxt_p) (Completion rados_completion_t_fp) oid bs =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_remove>
 asyncRemove
-    :: Pool
+    :: IOContext
     -> Completion
-    -> B.ByteString
+    -> ByteString
     -> IO (Either RadosError Int)
-asyncRemove (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
+asyncRemove (IOContext ioctxt_p) (Completion rados_completion_t_fp) oid =
     B.useAsCString oid $ \c_oid ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->
         checkError' "rados_aio_remove" $ F.c_rados_aio_remove
@@ -370,11 +409,11 @@ asyncRemove (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
 -- Calls:
 -- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_stat>
 asyncStat
-    :: Pool
+    :: IOContext
     -> Completion
-    -> B.ByteString
+    -> ByteString
     -> IO (Either RadosError (ForeignPtr Word64, ForeignPtr CTime))
-asyncStat (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
+asyncStat (IOContext ioctxt_p) (Completion rados_completion_t_fp) oid =
     B.useAsCString oid $ \c_oid -> do
         size_fp <- mallocForeignPtr
         time_fp <- mallocForeignPtr
@@ -387,19 +426,19 @@ asyncStat (Pool ioctxt_p) (Completion rados_completion_t_fp) oid =
 
 
 -- |
--- Write a 'ByteString' to 'Pool', object id and offset.
+-- Write a 'ByteString' to 'IOContext', object id and offset.
 --
 -- @
 -- ...
--- syncWrite Pool \"object_id\" 42 \"written at offset fourty-two\"
+-- syncWrite IOContext \"object_id\" 42 \"written at offset fourty-two\"
 -- @
 syncWrite
-    :: Pool
-    -> B.ByteString
+    :: IOContext
+    -> ByteString
     -> Word64
-    -> B.ByteString
+    -> ByteString
     -> IO (Maybe RadosError)
-syncWrite (Pool ioctxt_p) oid offset bs =
+syncWrite (IOContext ioctxt_p) oid offset bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) -> do
         let c_offset = fromIntegral offset
@@ -407,37 +446,37 @@ syncWrite (Pool ioctxt_p) oid offset bs =
             ioctxt_p c_oid c_buf c_size c_offset
 
 -- |
--- Write a 'ByteString' to 'Pool' and object id.
+-- Write a 'ByteString' to 'IOContext' and object id.
 --
--- This will replace any existing object at the same 'Pool' and object id.
+-- This will replace any existing object at the same 'IOContext' and object id.
 syncWriteFull
-    :: Pool
-    -> B.ByteString
-    -> B.ByteString
+    :: IOContext
+    -> ByteString
+    -> ByteString
     -> IO (Maybe RadosError)
-syncWriteFull (Pool ioctxt_p) oid bs =
+syncWriteFull (IOContext ioctxt_p) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, len) ->
         maybeError "rados_write_full" $ F.c_rados_write_full
             ioctxt_p c_oid c_buf len
 
 -- |
--- Append a 'ByteString' to 'Pool' and object id.
+-- Append a 'ByteString' to 'IOContext' and object id.
 --
 -- Returns the number of bytes written.
 syncAppend
-    :: Pool
-    -> B.ByteString
-    -> B.ByteString
+    :: IOContext
+    -> ByteString
+    -> ByteString
     -> IO (Maybe RadosError)
-syncAppend (Pool ioctxt_p) oid bs =
+syncAppend (IOContext ioctxt_p) oid bs =
     B.useAsCString oid   $ \c_oid ->
     useAsCStringCSize bs $ \(c_buf, c_size) ->
         maybeError "rados_append" $ F.c_rados_append
             ioctxt_p c_oid c_buf c_size
 
 -- |
--- Read from 'Pool', object ID and offset n bytes.
+-- Read from 'IOContext', object ID and offset n bytes.
 --
 -- There is no async read provided by this binding.
 --
@@ -455,12 +494,12 @@ syncAppend (Pool ioctxt_p) oid bs =
 --         ...
 -- @
 syncRead
-    :: Pool
-    -> B.ByteString
+    :: IOContext
+    -> ByteString
     -> Word64
     -> Word64
-    -> IO (Either RadosError B.ByteString)
-syncRead (Pool ioctxt_p) oid len offset = do
+    -> IO (Either RadosError ByteString)
+syncRead (IOContext ioctxt_p) oid len offset = do
     c_buf <- mallocBytes (fromIntegral len)
     B.useAsCString oid             $ \c_oid -> do
         let c_offset = fromIntegral offset
@@ -473,32 +512,33 @@ syncRead (Pool ioctxt_p) oid len offset = do
             Left e ->
                 return . Left $ e
 
-useAsCStringCSize :: B.ByteString -> ((CString, CSize) -> IO a) -> IO a
+useAsCStringCSize :: ByteString -> ((CString, CSize) -> IO a) -> IO a
 useAsCStringCSize bs f =
     B.useAsCStringLen bs $ \(cstr, len) -> f (cstr, (CSize . fromIntegral) len)
 
 -- |
--- Delete an object from 'Pool' by ID.
+-- Delete an object from 'IOContext' by ID.
 --
-syncRemove :: Pool -> B.ByteString -> IO (Maybe RadosError)
-syncRemove (Pool ioctxt_p) oid =
+syncRemove :: IOContext -> ByteString -> IO (Maybe RadosError)
+syncRemove (IOContext ioctxt_p) oid =
     B.useAsCString oid $ \c_oid ->
         maybeError "rados_remove" $ F.c_rados_remove
             ioctxt_p c_oid
 
-syncStat :: Pool -> B.ByteString -> IO (Either RadosError (Word64, EpochTime))
-syncStat (Pool ioctxt_p) oid =
+syncStat :: IOContext -> ByteString -> IO (Either RadosError (Word64, EpochTime))
+syncStat (IOContext ioctxt_p) oid =
     B.useAsCString oid $ \c_oid ->
     alloca $ \size_p ->
     alloca $ \time_p -> do
         result <- checkError' "rados_stat" $ F.c_rados_stat
             ioctxt_p c_oid size_p time_p
         case result of
-            Left e -> return $ Left e
-            Right _ -> do
+            Left e ->
+                return $ Left e
+            Right _ ->
                 Right <$> liftA2 (,) (peek size_p) (peek time_p)
 
-    
+
 combineLockFlags :: [F.LockFlag] -> F.LockFlag
 combineLockFlags = F.LockFlag . foldr ((.|.) . F.unLockFlag) 0
 
@@ -510,22 +550,22 @@ timeValFromRealFrac n =
 -- Make an exclusive lock
 exclusiveLock
     :: RealFrac duration
-    => Pool
-    -> B.ByteString -- ^ oid
-    -> B.ByteString -- ^ name
-    -> B.ByteString -- ^ cookie
-    -> B.ByteString -- ^ desc
+    => IOContext
+    -> ByteString -- ^ oid
+    -> ByteString -- ^ name
+    -> ByteString -- ^ cookie
+    -> ByteString -- ^ desc
     -> Maybe duration
     -> [F.LockFlag]
     -> IO ()
-exclusiveLock (Pool ioctx_p) oid name cookie desc maybe_duration flags =
+exclusiveLock (IOContext ioctx_p) oid name cookie desc maybe_duration flags =
     let flag = combineLockFlags flags in
         B.useAsCString oid    $ \c_oid ->
         B.useAsCString name   $ \c_name ->
         B.useAsCString cookie $ \c_cookie ->
         B.useAsCString desc   $ \c_desc ->
         case maybe_duration of
-            Nothing -> 
+            Nothing ->
                 checkErrorRetryBusy_ "c_rados_lock_exclusive" $
                     F.c_rados_lock_exclusive ioctx_p
                                             c_oid
@@ -551,16 +591,16 @@ exclusiveLock (Pool ioctx_p) oid name cookie desc maybe_duration flags =
 -- Make a shared lock
 sharedLock
     :: RealFrac duration
-    => Pool
-    -> B.ByteString -- ^ oid
-    -> B.ByteString -- ^ name
-    -> B.ByteString -- ^ cookie
-    -> B.ByteString -- ^ tag
-    -> B.ByteString -- ^ desc
+    => IOContext
+    -> ByteString -- ^ oid
+    -> ByteString -- ^ name
+    -> ByteString -- ^ cookie
+    -> ByteString -- ^ tag
+    -> ByteString -- ^ desc
     -> Maybe duration
     -> [F.LockFlag]
     -> IO ()
-sharedLock (Pool ioctx_p) oid name cookie tag desc maybe_duration flags =
+sharedLock (IOContext ioctx_p) oid name cookie tag desc maybe_duration flags =
     let flag = combineLockFlags flags in
         B.useAsCString oid    $ \c_oid ->
         B.useAsCString name   $ \c_name ->
@@ -568,7 +608,7 @@ sharedLock (Pool ioctx_p) oid name cookie tag desc maybe_duration flags =
         B.useAsCString tag    $ \c_tag ->
         B.useAsCString desc   $ \c_desc ->
         case maybe_duration of
-            Nothing -> 
+            Nothing ->
                 checkErrorRetryBusy_ "c_rados_lock_shared" $
                     F.c_rados_lock_shared ioctx_p
                                             c_oid
@@ -595,12 +635,12 @@ sharedLock (Pool ioctx_p) oid name cookie tag desc maybe_duration flags =
 -- |
 -- Release a lock of any sort
 unlock
-    :: Pool
-    -> B.ByteString -- ^ oid
-    -> B.ByteString -- ^ name
-    -> B.ByteString -- ^ cookie
+    :: IOContext
+    -> ByteString -- ^ oid
+    -> ByteString -- ^ name
+    -> ByteString -- ^ cookie
     -> IO (Maybe RadosError)
-unlock (Pool ioctx_p) oid name cookie =
+unlock (IOContext ioctx_p) oid name cookie =
     B.useAsCString oid    $ \c_oid ->
     B.useAsCString name   $ \c_name ->
     B.useAsCString cookie $ \c_cookie ->
@@ -613,7 +653,7 @@ unlock (Pool ioctx_p) oid name cookie =
 #if defined(ATOMIC_WRITES)
 newWriteOperation
     :: IO WriteOperation
-newWriteOperation = 
+newWriteOperation =
     WriteOperation <$> (F.c_rados_create_write_op >>=
                         newForeignPtr F.c_rados_release_write_op)
 
@@ -621,46 +661,46 @@ writeOperationAssertExists
     :: WriteOperation
     -> IO ()
 writeOperationAssertExists (WriteOperation o) =
-    withForeignPtr o F.c_rados_write_op_assert_exists 
+    withForeignPtr o F.c_rados_write_op_assert_exists
 
 writeOperationCompareXAttribute
     :: WriteOperation
-    -> B.ByteString
+    -> ByteString
     -> F.ComparisonFlag
-    -> B.ByteString
-    -> IO () 
+    -> ByteString
+    -> IO ()
 writeOperationCompareXAttribute (WriteOperation o) key comparison_flag value =
     withForeignPtr o $ \ofp ->
-    B.useAsCString key $ \c_key -> 
+    B.useAsCString key $ \c_key ->
     B.useAsCStringLen value $ \(c_val, c_val_len) -> do
         F.c_rados_write_op_cmpxattr
             ofp c_key comparison_flag c_val (fromIntegral c_val_len)
 
 writeOperationSetXAttribute
     :: WriteOperation
-    -> B.ByteString
-    -> B.ByteString
-    -> IO () 
+    -> ByteString
+    -> ByteString
+    -> IO ()
 writeOperationSetXAttribute (WriteOperation o) key value =
     withForeignPtr o $ \ofp ->
-    B.useAsCString key $ \c_key -> 
+    B.useAsCString key $ \c_key ->
     B.useAsCStringLen value $ \(c_val, c_val_len) -> do
         F.c_rados_write_op_setxattr ofp c_key c_val (fromIntegral c_val_len)
 
 
 writeOperationRemoveXAttribute
     :: WriteOperation
-    -> B.ByteString
-    -> IO () 
+    -> ByteString
+    -> IO ()
 writeOperationRemoveXAttribute (WriteOperation o) key =
     withForeignPtr o $ \ofp ->
-    B.useAsCString key $ \c_key -> 
+    B.useAsCString key $ \c_key ->
         F.c_rados_write_op_rmxattr ofp c_key
 
 writeOperationCreate
     :: WriteOperation
     -> Bool
-    -> IO () 
+    -> IO ()
 writeOperationCreate (WriteOperation o) exclusive =
     withForeignPtr o $ \ofp ->
         let int_exclusive = if exclusive then 1 else 0 in
@@ -668,45 +708,45 @@ writeOperationCreate (WriteOperation o) exclusive =
 
 writeOperationRemove
     :: WriteOperation
-    -> IO () 
+    -> IO ()
 writeOperationRemove (WriteOperation o) =
     withForeignPtr o $ \ofp ->
-        F.c_rados_write_op_remove ofp 
+        F.c_rados_write_op_remove ofp
 
 writeOperationWrite
     :: WriteOperation
-    -> B.ByteString
+    -> ByteString
     -> Word64
     -> IO ()
-writeOperationWrite (WriteOperation o) buffer offset = 
+writeOperationWrite (WriteOperation o) buffer offset =
     withForeignPtr o $ \ofp ->
     B.useAsCStringLen buffer $ \(c_buf, c_len) ->
         F.c_rados_write_op_write ofp c_buf (fromIntegral c_len) offset
 
 writeOperationWriteFull
     :: WriteOperation
-    -> B.ByteString
+    -> ByteString
     -> IO ()
-writeOperationWriteFull (WriteOperation o) buffer = 
+writeOperationWriteFull (WriteOperation o) buffer =
     withForeignPtr o $ \ofp ->
     B.useAsCStringLen buffer $ \(c_buf, c_len) ->
         F.c_rados_write_op_write_full ofp c_buf (fromIntegral c_len)
 
 writeOperationAppend
     :: WriteOperation
-    -> B.ByteString
+    -> ByteString
     -> IO ()
-writeOperationAppend (WriteOperation o) buffer = 
+writeOperationAppend (WriteOperation o) buffer =
     withForeignPtr o $ \ofp ->
     B.useAsCStringLen buffer $ \(c_buf, c_len) ->
         F.c_rados_write_op_append ofp c_buf (fromIntegral c_len)
 
 writeOperate
     :: WriteOperation
-    -> Pool
-    -> B.ByteString
+    -> IOContext
+    -> ByteString
     -> IO (Maybe RadosError)
-writeOperate (WriteOperation o) (Pool ioctx_p) oid = 
+writeOperate (WriteOperation o) (IOContext ioctx_p) oid =
     withForeignPtr o $ \ofp ->
     B.useAsCString oid $ \c_oid->
         maybeError "rados_write_op_operate" $
@@ -714,11 +754,11 @@ writeOperate (WriteOperation o) (Pool ioctx_p) oid =
 
 asyncWriteOperate
     :: WriteOperation
-    -> Pool
+    -> IOContext
     -> Completion
-    -> B.ByteString
-    -> IO (Either RadosError Int) 
-asyncWriteOperate (WriteOperation o) (Pool ioctx_p)
+    -> ByteString
+    -> IO (Either RadosError Int)
+asyncWriteOperate (WriteOperation o) (IOContext ioctx_p)
                   (Completion rados_completion_t_fp) oid =
     withForeignPtr o $ \ofp ->
     withForeignPtr rados_completion_t_fp $ \cmp_p ->

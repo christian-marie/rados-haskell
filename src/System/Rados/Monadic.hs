@@ -7,18 +7,18 @@
 {-# LANGUAGE ConstraintKinds #-}
 
 -- |
--- Module      : System.Rados
+-- Module      : System.Rados.Monadic
 -- Copyright   : (c) 2010-2014 Anchor
 -- License     : BSD-3
 -- Maintainer  : Christian Marie <christian@ponies.io>
 -- Stability   : experimental
 -- Portability : non-portable
 --
--- Bindings to librados, covers async read/writes, locks and atomic
--- writes (build flag).
+-- Monadic interface to librados, covers async read/writes, locks and atomic
+-- writes (ensure you use the build flag).
 --
 -- This is the monadic API, you may use the underlying internals or FFI calls
--- via "System.Rados.Internal" and "System.Rados.FFI".
+-- via "System.Rados.Base" and "System.Rados.FFI".
 --
 -- A simple complete example:
 --
@@ -37,7 +37,7 @@
 --     either throwIO B.putStrLn (kitty :: Either RadosError B.ByteString)
 -- @
 --
-module System.Rados
+module System.Rados.Monadic
 (
     -- * Initialization
     runConnect,
@@ -103,7 +103,7 @@ module System.Rados
     -- * Extra atomic operations
     assertExists,
     compareXAttribute,
-    I.eq, I.ne, I.gt, I.gte, I.lt, I.lte, I.nop,
+    B.eq, B.ne, B.gt, B.gte, B.lt, B.lte, B.nop,
     setXAttribute,
 #endif
     -- * Locking
@@ -146,31 +146,31 @@ import Data.Maybe
 import qualified Control.Concurrent.Async as A
 import qualified Data.ByteString.Char8 as B
 import qualified System.Rados.Error as E
-import qualified System.Rados.Internal as I
+import qualified System.Rados.Base as B
 import Data.UUID
 import Data.UUID.V4
 
-newtype Connection a = Connection (ReaderT I.Connection IO a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Connection)
+newtype Connection a = Connection (ReaderT B.Connection IO a)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.Connection)
 
-newtype Pool a = Pool (ReaderT I.Pool IO a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Pool)
+newtype Pool a = Pool (ReaderT B.IOContext IO a)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.IOContext)
 
 newtype Object parent a = Object (ReaderT B.ByteString parent a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.ByteString)
 
-newtype Async a = Async (ReaderT I.Pool IO a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.Pool)
+newtype Async a = Async (ReaderT B.IOContext IO a)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.IOContext)
 
 #if defined(ATOMIC_WRITES)
-newtype AtomicWrite a = AtomicWrite (ReaderT I.WriteOperation IO a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader I.WriteOperation)
+newtype AtomicWrite a = AtomicWrite (ReaderT B.WriteOperation IO a)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.WriteOperation)
 #endif
 
 -- | A write request in flight, access a possible error with 'waitSafe'
-data AsyncWrite = ActionFailure E.RadosError | ActionInFlight I.Completion
+data AsyncWrite = ActionFailure E.RadosError | ActionInFlight B.Completion
 -- | A read request in flight, access the contents of the read with 'look'
-data AsyncRead a = ReadFailure E.RadosError | ReadInFlight I.Completion a
+data AsyncRead a = ReadFailure E.RadosError | ReadInFlight B.Completion a
 -- | The result of a 'stat', access the contents with 'modifyTime' and
 -- 'fileSize'
 data StatResult = StatResult Word64 EpochTime
@@ -186,8 +186,8 @@ modifyTime :: StatResult -> EpochTime
 modifyTime (StatResult _ m) = m
 modifyTime (StatInFlight _ m) = unsafePerformIO $ withForeignPtr m peek
 
-class (MonadReader I.Pool m, MonadIO m) => PoolReader m where
-    unPoolReader :: m a -> ReaderT I.Pool IO a
+class (MonadReader B.IOContext m, MonadIO m) => PoolReader m where
+    unPoolReader :: m a -> ReaderT B.IOContext IO a
 
 class Monad m => RadosWriter m e | m -> e where
     -- | Write a chunk of data
@@ -312,86 +312,86 @@ instance PoolReader Pool where
 instance RadosWriter (Object Pool) (Maybe E.RadosError) where
     writeChunk offset buffer = do
         (object, pool) <- askObjectPool
-        liftIO $ I.syncWrite pool object offset buffer
+        liftIO $ B.syncWrite pool object offset buffer
 
     writeFull buffer = do
         (object, pool) <- askObjectPool
-        liftIO $ I.syncWriteFull pool object buffer
+        liftIO $ B.syncWriteFull pool object buffer
 
     append buffer = do
         (object, pool) <- askObjectPool
-        liftIO $ I.syncAppend pool object buffer
+        liftIO $ B.syncAppend pool object buffer
 
     remove = do
         (object, pool) <- askObjectPool
-        liftIO $ I.syncRemove pool object
+        liftIO $ B.syncRemove pool object
 
 instance RadosWriter (Object Async) AsyncWrite where
     writeChunk offset buffer = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
-            liftIO $ I.asyncWrite pool completion object offset buffer
+            liftIO $ B.asyncWrite pool completion object offset buffer
 
     writeFull buffer = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
-            liftIO $ I.asyncWriteFull pool completion object buffer
+            liftIO $ B.asyncWriteFull pool completion object buffer
 
     append buffer = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
-            liftIO $ I.asyncAppend pool completion object buffer
+            liftIO $ B.asyncAppend pool completion object buffer
 
     remove = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion -> 
-            liftIO $ I.asyncRemove pool completion object
+            liftIO $ B.asyncRemove pool completion object
 
 #if defined(ATOMIC_WRITES)
 instance RadosWriter AtomicWrite () where
     writeChunk offset buffer = do
         op <- ask
-        liftIO $ I.writeOperationWrite op buffer offset
+        liftIO $ B.writeOperationWrite op buffer offset
 
     writeFull buffer = do
         op <- ask
-        liftIO $ I.writeOperationWriteFull op buffer
+        liftIO $ B.writeOperationWriteFull op buffer
 
     append buffer = do
         op <- ask
-        liftIO $ I.writeOperationAppend op buffer
+        liftIO $ B.writeOperationAppend op buffer
 
     remove = do
         op <- ask
-        liftIO $ I.writeOperationRemove op
+        liftIO $ B.writeOperationRemove op
 
 instance AtomicWriter (Object Pool) (Maybe E.RadosError) where
     runAtomicWrite (AtomicWrite action) = do
         (object, pool) <- askObjectPool
         liftIO $ do
-            op <- I.newWriteOperation
+            op <- B.newWriteOperation
             runReaderT action op
-            I.writeOperate op pool object
+            B.writeOperate op pool object
 
 instance AtomicWriter (Object Async) AsyncWrite where
     runAtomicWrite (AtomicWrite action) = do
         (object, pool) <- askObjectPool
         withActionCompletion $ \completion ->
             liftIO $ do
-                op <- I.newWriteOperation
+                op <- B.newWriteOperation
                 runReaderT action op
-                I.asyncWriteOperate op pool completion object
+                B.asyncWriteOperate op pool completion object
 #endif
 
 instance RadosReader (Object Pool) (Either E.RadosError) where
     readChunk len offset = do
         (object, pool) <- askObjectPool
-        liftIO $ I.syncRead pool object len offset
+        liftIO $ B.syncRead pool object len offset
 
     stat = do
         (object, pool) <- askObjectPool
         liftIO $ do
-            s <- I.syncStat pool object
+            s <- B.syncStat pool object
             return $ case s of
                 Left e -> Left e
                 Right (size, time) -> Right $ StatResult size time
@@ -403,13 +403,13 @@ instance RadosReader (Object Async) AsyncRead where
     readChunk len offset = do
         (object, pool) <- askObjectPool
         withReadCompletion $ \completion -> 
-            liftIO $ I.asyncRead pool completion object len offset
+            liftIO $ B.asyncRead pool completion object len offset
 
     stat = do
         (object, pool) <- askObjectPool
         withReadCompletion $ \completion ->
             liftIO $ do
-                s <- I.asyncStat pool completion object
+                s <- B.asyncStat pool completion object
                 return $ case s of
                     Left e ->
                         Left e
@@ -419,7 +419,7 @@ instance RadosReader (Object Async) AsyncRead where
     unWrap = look
     wrapFail = return . ReadFailure
 
-askObjectPool :: MonadReader I.Pool m => Object m (B.ByteString, I.Pool) 
+askObjectPool :: MonadReader B.IOContext m => Object m (B.ByteString, B.IOContext) 
 askObjectPool =
     liftM2 (,) ask (Object . lift $ ask)
 
@@ -453,15 +453,15 @@ async action = do
 --      Nothing -> return ()
 -- @
 waitSafe :: MonadIO m => AsyncWrite -> m (Maybe E.RadosError)
-waitSafe = waitAsync I.waitForSafe
+waitSafe = waitAsync B.waitForSafe
 
 -- | Wait until a Rados write has hit memory on all replicas. This is less safe
 -- than waitSafe, but still pretty safe. Safe.
 waitComplete :: MonadIO m => AsyncWrite -> m (Maybe E.RadosError)
-waitComplete = waitAsync I.waitForComplete
+waitComplete = waitAsync B.waitForComplete
 
 waitAsync :: MonadIO m
-          => (I.Completion -> IO a) -> AsyncWrite -> m (Maybe E.RadosError)
+          => (B.Completion -> IO a) -> AsyncWrite -> m (Maybe E.RadosError)
 waitAsync f async_request =
     case async_request of
         ActionFailure e ->
@@ -469,7 +469,7 @@ waitAsync f async_request =
         ActionInFlight completion -> do
             e <- liftIO $ do
                 f completion
-                I.getAsyncError completion 
+                B.getAsyncError completion 
             return $ either Just (const Nothing) e
 
 
@@ -491,8 +491,8 @@ look async_request =
             return $ Left e
         ReadInFlight completion a -> do
             ret <- liftIO $ do
-                I.waitForSafe completion
-                I.getAsyncError completion 
+                B.waitForSafe completion
+                B.getAsyncError completion 
             return $ case ret of
                 Left e -> Left e
                 Right n -> Right $
@@ -507,18 +507,18 @@ look async_request =
                         Nothing -> a
 
 -- | Run an action with a completion.
-withActionCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncWrite
+withActionCompletion :: (B.Completion -> IO (Either E.RadosError a)) -> Object Async AsyncWrite
 withActionCompletion f = do
-    completion <- liftIO I.newCompletion
+    completion <- liftIO B.newCompletion
     result <- liftIO $ f completion
     return $ case result of
         Left e  -> ActionFailure e
         Right _ -> ActionInFlight completion
     
 -- | Run an read with a completion
-withReadCompletion :: (I.Completion -> IO (Either E.RadosError a)) -> Object Async (AsyncRead a)
+withReadCompletion :: (B.Completion -> IO (Either E.RadosError a)) -> Object Async (AsyncRead a)
 withReadCompletion f = do
-    completion <- liftIO I.newCompletion
+    completion <- liftIO B.newCompletion
     result <- liftIO $ f completion
     return $ case result of
         Left e -> ReadFailure e
@@ -533,21 +533,21 @@ withReadCompletion f = do
 -- @
 runConnect
     :: Maybe B.ByteString                        -- ^ Optional user name
-    -> (I.Connection -> IO (Maybe E.RadosError)) -- ^ Configuration function
+    -> (B.Connection -> IO (Maybe E.RadosError)) -- ^ Configuration function
     -> Connection a
     -> IO a
 runConnect user configure (Connection action) =
     bracket
-        (do h <- I.newConnection user
+        (do h <- B.newConnection user
             conf <- configure h
             case conf of
                 Just e -> do
-                    I.cleanupConnection h
+                    B.cleanupConnection h
                     throwIO e
                 Nothing -> do
-                    I.connect h
+                    B.connect h
                     return h)
-        I.cleanupConnection
+        B.cleanupConnection
         (runReaderT action)
 
 -- |
@@ -567,8 +567,8 @@ runPool :: B.ByteString -> Pool a -> Connection a
 runPool pool (Pool action) = do
     connection <- ask
     liftIO $ bracket
-        (I.newPool connection pool)
-        I.cleanupPool
+        (B.newIOContext connection pool)
+        B.cleanupIOContext
         (runReaderT action)
 
 
@@ -611,18 +611,18 @@ runAsync (Async action) = do
 -- | Read a config from a relative or absolute 'FilePath' into a 'Connection'.
 --
 -- Intended for use with 'runConnect'.
-parseConfig :: FilePath -> I.Connection -> IO (Maybe E.RadosError)
-parseConfig = flip I.confReadFile
+parseConfig :: FilePath -> B.Connection -> IO (Maybe E.RadosError)
+parseConfig = flip B.confReadFile
 
 -- | Read a config from the command line, note that no help flag will be
 -- provided.
-parseArgv :: I.Connection -> IO (Maybe E.RadosError)
-parseArgv = I.confParseArgv
+parseArgv :: B.Connection -> IO (Maybe E.RadosError)
+parseArgv = B.confParseArgv
 
 -- | Parse the contents of the environment variable CEPH_ARGS as if they were
 -- ceph command line options.
-parseEnv :: I.Connection -> IO (Maybe E.RadosError)
-parseEnv = I.confParseEnv
+parseEnv :: B.Connection -> IO (Maybe E.RadosError)
+parseEnv = B.confParseEnv
 
 -- | Perform an action with an exclusive lock.
 withExclusiveLock
@@ -634,7 +634,7 @@ withExclusiveLock
     -> Pool a
 withExclusiveLock oid name desc duration action =
     withLock oid name action $ \pool cookie -> 
-        I.exclusiveLock pool oid name cookie desc duration []
+        B.exclusiveLock pool oid name cookie desc duration []
 
 -- | Perform an action with an shared lock.
 withSharedLock
@@ -647,13 +647,13 @@ withSharedLock
     -> Pool a
 withSharedLock oid name desc tag duration action =
     withLock oid name action $ \pool cookie -> 
-        I.sharedLock pool oid name cookie tag desc duration []
+        B.sharedLock pool oid name cookie tag desc duration []
 
 withLock
     :: B.ByteString
     -> B.ByteString
     -> Pool a
-    -> (I.Pool -> B.ByteString -> IO b)
+    -> (B.IOContext -> B.ByteString -> IO b)
     -> Pool a
 withLock oid name (Pool user_action) lock_action = do
     pool <- ask
@@ -669,10 +669,10 @@ withLock oid name (Pool user_action) lock_action = do
     -- Handle the case of a lock possibly expiring. It's okay not to be able to
     -- remove a lock that does not exist.
     tryUnlock pool oid' name' cookie = do
-        me <- I.unlock pool oid' name' cookie
+        me <- B.unlock pool oid' name' cookie
         case me of
             Nothing -> return ()
-            Just (E.NoEntity _ _ _) -> return ()
+            Just (E.NoEntity {}) -> return ()
             Just e -> throwIO e
 
 
@@ -681,15 +681,15 @@ withLock oid name (Pool user_action) lock_action = do
 assertExists :: AtomicWrite ()
 assertExists = do
     op <- ask
-    liftIO $ I.writeOperationAssertExists op
+    liftIO $ B.writeOperationAssertExists op
 
-compareXAttribute :: B.ByteString -> I.ComparisonFlag -> B.ByteString -> AtomicWrite ()
+compareXAttribute :: B.ByteString -> B.ComparisonFlag -> B.ByteString -> AtomicWrite ()
 compareXAttribute key operator value = do
     op <- ask
-    liftIO $ I.writeOperationCompareXAttribute op key operator value
+    liftIO $ B.writeOperationCompareXAttribute op key operator value
 
 setXAttribute :: B.ByteString -> B.ByteString -> AtomicWrite ()
 setXAttribute key value = do
     op <- ask
-    liftIO $ I.writeOperationSetXAttribute op key value
+    liftIO $ B.writeOperationSetXAttribute op key value
 #endif
