@@ -1,3 +1,13 @@
+-- |
+-- Module      : System.Rados.Error
+-- Copyright   : (c) 2010-2014 Anchor
+-- License     : BSD-3
+-- Maintainer  : Christian Marie <christian@ponies.io>
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Common error handling code and types.
+
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RecordWildCards    #-}
 module System.Rados.Error
