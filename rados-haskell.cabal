@@ -4,12 +4,26 @@
 name:                rados-haskell
 version:             3.0.0
 synopsis:            librados haskell bindings
--- description:         
+description:         Covers the basics of the API.  
+                     .
+		     The "Monadic" module is recommended for
+		     safety/ease of use.
+                     .
+		     The "Base" module is possibly more flexible
+		     but requires you to clean up your own resources and track
+		     a lot of state.
+                     .
+		     To use atomic writes, you must build with the
+		     /atomic_writes/ build flag.
+                     .
+		     These bindings are probably not quite production ready.
+		     They are, however, being used in production by Anchor
+		     Hosting as of Jan 2014.
 homepage:            github
 license:             BSD3
 license-file:        LICENSE
 author:              Anchor Hosting
-maintainer:          pingu@anchor.net.au
+maintainer:          pingu@ponies.io
 -- copyright:           
 category:            System
 build-type:          Simple
