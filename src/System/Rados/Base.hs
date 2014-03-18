@@ -55,6 +55,8 @@ module System.Rados.Base
     asyncRemove,
     getAsyncError,
 -- **Locking
+-- | These functions will be very painful to use without the helpers provided
+-- in the Monadic module.
     exclusiveLock,
     sharedLock,
     unlock,
