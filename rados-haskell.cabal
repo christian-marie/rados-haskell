@@ -4,8 +4,11 @@
 name:                rados-haskell
 version:             3.0.0
 synopsis:            librados haskell bindings
-description:         Covers the basics of the API.  
-                     .
+description:         These bindings do not cover the entire API, they support
+                     read, write, stat, creation, and unlinking with shared 
+		     locks. You can perform these actions with combinations 
+		     of sync/async/atomic execution.
+		     .
 		     The "System.Rados.Monadic" module is recommended for
 		     safety/ease of use.
                      .
