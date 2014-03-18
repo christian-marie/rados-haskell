@@ -290,12 +290,27 @@ waitForSafe :: Completion -> IO ()
 waitForSafe (Completion rados_completion_t_fp) = void $
     withForeignPtr rados_completion_t_fp F.c_rados_aio_wait_for_complete
 
+-- Calls rados_aio_get_return_value, return value will be positive, and may or
+-- may not be useful.
+--
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_get_return_value>
 getAsyncError :: Completion -> IO (Either RadosError Int)
 getAsyncError (Completion rados_completion_t_fp) =
     checkError' "rados_aio_get_return_value" $
         withForeignPtr rados_completion_t_fp
             F.c_rados_aio_get_return_value
-
+-- |
+-- Returns a ByteString that will be populated when the completion is done.
+--
+-- Attempting to read the ByteString before then is undefined.
+--
+-- The completion will return with the number of bytes actually read.
+-- 
+-- Due to this complexity, it is recommended to use the monadic bindings when
+-- attempting to do async reads.
+--
+-- Calls rados_aio_read:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_aio_read>
 asyncRead :: IOContext
           -> Completion
           -> ByteString
@@ -479,13 +494,6 @@ syncAppend (IOContext ioctxt_p) oid bs =
 -- Read from 'IOContext', object ID and offset n bytes.
 --
 -- There is no async read provided by this binding.
---
--- TODO: Document a multithreaded example to compensate for no async. This may
--- or may not require to be called from the same OS thread. Test and document
--- that.
---
--- Or, even, provide an abstract Future type that can simply wrap an mvar, then
--- do the multithreading for the user.
 --
 -- @
 --         ...
