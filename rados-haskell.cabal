@@ -6,8 +6,10 @@ version:             3.0.0
 synopsis:            librados haskell bindings
 description:         These bindings do not cover the entire API, they support
                      read, write, stat, creation, and unlinking with shared 
-		     locks. You can perform these actions with combinations 
-		     of sync/async/atomic execution.
+		     locks.
+		     .
+		     You can perform these actions with combinations of sync,
+		     async, and atomic execution.
 		     .
 		     The "System.Rados.Monadic" module is recommended for
 		     safety/ease of use.
@@ -16,12 +18,11 @@ description:         These bindings do not cover the entire API, they support
 		     but requires you to clean up your own resources and track
 		     a lot of state.
                      .
-		     To use atomic writes, you must build with the
+		     Note: To use atomic writes, you must build with the
 		     /atomic_writes/ build flag.
                      .
-		     These bindings are probably not quite production ready.
-		     They are, however, being used in production by Anchor
-		     Hosting as of Jan 2014.
+		     Stability: These bindings are not as polished as they could be, but
+		     are in production use at Anchor Hosting as of Jan 2014.
 homepage:            github
 license:             BSD3
 license-file:        LICENSE
