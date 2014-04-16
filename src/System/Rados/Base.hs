@@ -59,6 +59,7 @@ module System.Rados.Base
     withList,
     nextObject,
     objects,
+    unsafeObjects,
     openList,
     closeList,
 -- **Locking
@@ -712,13 +713,20 @@ nextObject (ListContext list_p) =
             Just (NoEntity{}) -> return Nothing
             Just e            -> throwIO e
             Nothing           ->  Just <$> (peek string_p >>= B.packCString)
+-- |
+-- Provide a strict list of all objects.
+objects :: IOContext -> IO ([ByteString])
+objects ctx = do
+    os <- unsafeObjects ctx
+    length os `seq` return os
 
 -- |
 -- Provide a lazy list of all objects. Will only be evaluated as elements are
--- requested. Do not call this again without consuming the whole list, or you
+-- requested. Do not attempt to evaluate this list outside of a valid
+-- iocontext. Do not call this again without consuming the whole list, or you
 -- will reset the iteration halfway.
-objects :: IOContext -> IO ([ByteString])
-objects ctx = do
+unsafeObjects :: IOContext -> IO ([ByteString])
+unsafeObjects ctx = do
     list_ctx <- openList ctx
     go list_ctx `onException` closeList list_ctx
   where

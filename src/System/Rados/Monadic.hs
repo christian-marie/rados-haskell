@@ -47,6 +47,7 @@ module System.Rados.Monadic
     runPool,
     -- * Pool enumeration
     objects,
+    unsafeObjects,
     -- * Reading
     -- ** A note on signatures
     --
@@ -677,13 +678,19 @@ withLock oid name (Pool user_action) lock_action = do
             Just (E.NoEntity {}) -> return ()
             Just e -> throwIO e
 
--- | Return a lazy list of pool items. This list must be evaluated within the
--- pool monad, if you wish to access the list outside of the pool monad you
--- must fully evaluate it first.
+-- | Return a strict list of pool items.
 objects :: Pool [B.ByteString]
 objects = do
+    os <- unsafeObjects
+    length os `seq` return os
+
+-- | Return a lazy list of pool items. This list must be evaluated within the
+-- pool monad, if you wish to access the list outside of the pool monad you
+-- must fully evaluate it first (which is all objects does).
+unsafeObjects :: Pool [B.ByteString]
+unsafeObjects = do
     pool <- ask
-    liftIO $ B.objects pool
+    liftIO $ B.unsafeObjects pool
 
 #if defined(ATOMIC_WRITES)
 assertExists :: AtomicWrite ()
