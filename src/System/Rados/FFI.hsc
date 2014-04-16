@@ -29,6 +29,9 @@ data RadosT
 -- typedef void *rados_ioctx_t;
 data RadosIOCtxT
 
+-- typedef void *rados_list_ctx_t;
+data RadosListCtxT
+
 -- typedef void *rados_completion_t;
 data RadosCompletionT
 
@@ -263,6 +266,24 @@ foreign import ccall safe "librados.h rados_lock_shared"
         -> CString
         -> Ptr TimeVal
         -> LockFlag
+        -> IO CInt
+
+foreign import ccall safe "librados.h rados_objects_list_open"
+    c_rados_objects_list_open
+        :: Ptr RadosIOCtxT
+        -> Ptr (Ptr RadosListCtxT)
+        -> IO CInt
+
+foreign import ccall unsafe "librados.h rados_objects_list_close"
+    c_rados_objects_list_close
+        :: Ptr RadosListCtxT
+        -> IO ()
+
+foreign import ccall safe "librados.h rados_objects_list_next"
+    c_rados_objects_list_next
+        :: Ptr RadosListCtxT
+        -> Ptr CString
+        -> Ptr CString
         -> IO CInt
 
 foreign import ccall safe "getProgArgv"

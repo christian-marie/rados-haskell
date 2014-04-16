@@ -45,6 +45,8 @@ module System.Rados.Monadic
     parseArgv,
     parseEnv,
     runPool,
+    -- * Pool enumeration
+    objects,
     -- * Reading
     -- ** A note on signatures
     --
@@ -675,7 +677,13 @@ withLock oid name (Pool user_action) lock_action = do
             Just (E.NoEntity {}) -> return ()
             Just e -> throwIO e
 
-
+-- | Return a lazy list of pool items. This list must be evaluated within the
+-- pool monad, if you wish to access the list outside of the pool monad you
+-- must fully evaluate it first.
+objects :: Pool [B.ByteString]
+objects = do
+    pool <- ask
+    liftIO $ B.objects pool
 
 #if defined(ATOMIC_WRITES)
 assertExists :: AtomicWrite ()

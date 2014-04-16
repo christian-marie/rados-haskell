@@ -22,6 +22,7 @@ module System.Rados.Base
     Connection,
     Completion,
     IOContext,
+    ListContext,
     F.TimeVal(..),
     F.LockFlag,
 -- *Connecting
@@ -54,6 +55,12 @@ module System.Rados.Base
     asyncStat,
     asyncRemove,
     getAsyncError,
+-- * Pool object enumeration
+    withList,
+    nextObject,
+    objects,
+    openList,
+    closeList,
 -- **Locking
 -- | These functions will be very painful to use without the helpers provided
 -- in the Monadic module.
@@ -81,11 +88,12 @@ module System.Rados.Base
 #endif
 ) where
 
+import System.IO.Unsafe (unsafeInterleaveIO)
 import System.Rados.Error
 import qualified System.Rados.FFI as F
 
 import Control.Applicative
-import Control.Exception (bracket)
+import Control.Exception (bracket, throwIO, onException)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -100,6 +108,9 @@ newtype Connection = Connection (Ptr F.RadosT)
 
 -- | An IO context with a rados pool.
 newtype IOContext = IOContext (Ptr F.RadosIOCtxT)
+
+-- | A pool listing handle
+newtype ListContext = ListContext (Ptr F.RadosListCtxT)
 
 -- | A handle to query the status of an asynchronous action
 newtype Completion = Completion (ForeignPtr F.RadosCompletionT)
@@ -307,7 +318,7 @@ getAsyncError (Completion rados_completion_t_fp) =
 -- Attempting to read the ByteString before then is undefined.
 --
 -- The completion will return with the number of bytes actually read.
--- 
+--
 -- Due to this complexity, it is recommended to use the monadic bindings when
 -- attempting to do async reads.
 --
@@ -641,7 +652,6 @@ sharedLock (IOContext ioctx_p) oid name cookie tag desc maybe_duration flags =
                                                  c_desc
                                                  timeval_p
                                                  flag
---
 -- |
 -- Release a lock of any sort
 unlock
@@ -659,6 +669,64 @@ unlock (IOContext ioctx_p) oid name cookie =
                              c_oid
                              c_name
                              c_cookie
+
+-- |
+-- Begin objects for pool.
+--
+-- Ensure that you call closeList. Preferably use withList.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_open>
+openList :: IOContext -> IO ListContext
+openList (IOContext ioctx_p) =
+    alloca $ \list_p_p -> do
+        checkError_ "rados_objects_list_open" $
+                F.c_rados_objects_list_open ioctx_p list_p_p
+        ListContext <$> peek list_p_p
+
+-- |
+-- Close a listing context.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_close>
+closeList :: ListContext -> IO ()
+closeList (ListContext list_p) =
+    F.c_rados_objects_list_close list_p
+
+-- |
+-- Perform an action with a list context, safely cleaning up with bracket
+withList :: IOContext -> (ListContext -> IO a) -> IO a
+withList io_ctx = bracket (openList io_ctx) closeList
+
+-- |
+-- Return the next OID in the pool, Nothing for end of stream.
+--
+-- Calls:
+-- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_next>
+nextObject :: ListContext -> IO (Maybe ByteString)
+nextObject (ListContext list_p) =
+    alloca $ \string_p -> do
+        me <- maybeError "c_rados_objects_list_next" $
+            F.c_rados_objects_list_next list_p string_p nullPtr
+        case me of
+            Just (NoEntity{}) -> return Nothing
+            Just e            -> throwIO e
+            Nothing           ->  Just <$> (peek string_p >>= B.packCString)
+
+-- |
+-- Provide a lazy list of all objects. Will only be evaluated as elements are
+-- requested. Do not call this again without consuming the whole list, or you
+-- will reset the iteration halfway.
+objects :: IOContext -> IO ([ByteString])
+objects ctx = do
+    list_ctx <- openList ctx
+    go list_ctx `onException` closeList list_ctx
+  where
+    go list_ctx = do
+        next <- nextObject list_ctx
+        case next of
+            Nothing -> closeList list_ctx >> return []
+            Just n  -> (n:) <$> unsafeInterleaveIO (go list_ctx)
 
 #if defined(ATOMIC_WRITES)
 newWriteOperation
