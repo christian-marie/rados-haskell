@@ -532,7 +532,7 @@ withReadCompletion f = do
 -- IO if the connection or configuration fails.
 --
 -- @
--- runConnect (parseConfig \"ceph.conf\") $ runPool ...
+-- runConnect Nothing (parseConfig \"ceph.conf\") $ runPool ...
 -- @
 runConnect
     :: Maybe B.ByteString                        -- ^ Optional user name
