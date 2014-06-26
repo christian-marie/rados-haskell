@@ -2,3 +2,5 @@ dist/
 config.h
 check
 tags
+.cabal-sandbox
+cabal.sandbox.config
