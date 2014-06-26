@@ -341,7 +341,7 @@ asyncRead (IOContext ioctx_p) (Completion rados_completion_t_fp) oid len offset 
                 F.c_rados_aio_read ioctx_p c_oid cmp_p c_buf c_len c_offset
         case result of
             Right _ ->
-                Right <$> B.unsafePackCStringLen (c_buf, fromIntegral len)
+                Right <$> B.unsafePackMallocCStringLen (c_buf, fromIntegral len)
             Left e ->
                 return . Left $ e
 
@@ -530,7 +530,7 @@ syncRead (IOContext ioctxt_p) oid len offset = do
             F.c_rados_read ioctxt_p c_oid c_buf c_len c_offset
         case result of
             Right read_bytes ->
-                Right <$> B.unsafePackCStringLen (c_buf, read_bytes)
+                Right <$> B.unsafePackMallocCStringLen (c_buf, read_bytes)
             Left e ->
                 return . Left $ e
 
