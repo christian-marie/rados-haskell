@@ -51,7 +51,7 @@ library
   other-modules:       System.Rados.Error
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=3 && <5,
-                       bytestring,
+                       bytestring >= 0.10.2,
                        mtl,
                        containers,
                        uuid,
@@ -69,7 +69,7 @@ test-suite             check
   type:                exitcode-stdio-1.0
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=3 && <5,
-                       bytestring >= 0.10.2,
+                       bytestring,
                        hspec,
                        HUnit,
                        mtl,
