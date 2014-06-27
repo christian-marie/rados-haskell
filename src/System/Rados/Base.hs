@@ -219,14 +219,17 @@ connect (Connection rados_t_p) =
 
 -- |
 -- Perform an action given an 'IOContext', cleans up with 'bracket'
---  @
---  withConnection Nothing $ \c -> do
---    confParseArgv c
---    withIOContext c "pool_a" \ctx ->
---      syncRemove ctx "an_object"
---  @
+--
+-- @
+-- withConnection Nothing $ \c -> do
+--     confParseArgv c
+--     withIOContext c "pool_a" \ctx ->
+--         syncRemove ctx "an_object"
+-- @
+--
 withIOContext :: Connection -> ByteString -> (IOContext -> IO a) -> IO a
 withIOContext c pool = bracket (newIOContext c pool) cleanupIOContext
+
 -- |
 -- Attempt to create a new 'IOContext', requires a valid 'Connection' and
 -- pool name.
