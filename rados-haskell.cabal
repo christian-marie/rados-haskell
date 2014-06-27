@@ -69,7 +69,7 @@ test-suite             check
   type:                exitcode-stdio-1.0
   other-extensions:    ForeignFunctionInterface
   build-depends:       base >=3 && <5,
-                       bytestring,
+                       bytestring >= 0.10.2,
                        hspec,
                        HUnit,
                        mtl,
