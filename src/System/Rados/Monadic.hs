@@ -150,8 +150,6 @@ import qualified Control.Concurrent.Async as A
 import qualified Data.ByteString.Char8 as B
 import qualified System.Rados.Error as E
 import qualified System.Rados.Base as B
-import Data.UUID
-import Data.UUID.V4
 
 newtype Connection a = Connection (ReaderT B.Connection IO a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader B.Connection)
@@ -660,23 +658,14 @@ withLock
     -> Pool a
 withLock oid name (Pool user_action) lock_action = do
     pool <- ask
-    cookie <- liftIO $ B.pack . toString <$> nextRandom
+    cookie <- liftIO B.newCookie
     -- Re-wrap user's action in a sub-ReaderT that is identical, this way we
     -- can just use bracket_ to ensure the lock is cleaned up even if they
     -- generate an exception.
     liftIO $ bracket_
         (lock_action pool cookie)
-        (tryUnlock pool oid name cookie)
+        (B.unlock pool oid name cookie >>= B.missingOK)
         (runReaderT user_action pool)
-  where
-    -- Handle the case of a lock possibly expiring. It's okay not to be able to
-    -- remove a lock that does not exist.
-    tryUnlock pool oid' name' cookie = do
-        me <- B.unlock pool oid' name' cookie
-        case me of
-            Nothing -> return ()
-            Just (E.NoEntity {}) -> return ()
-            Just e -> throwIO e
 
 -- | Return a strict list of pool items.
 objects :: Pool [B.ByteString]

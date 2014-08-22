@@ -25,6 +25,7 @@ module System.Rados.Base
     ListContext,
     F.TimeVal(..),
     F.LockFlag,
+    RadosError(..),
 -- *Connecting
     withConnection,
     newConnection,
@@ -65,6 +66,7 @@ module System.Rados.Base
 -- **Locking
 -- | These functions will be very painful to use without the helpers provided
 -- in the Monadic module.
+    newCookie,
     exclusiveLock,
     sharedLock,
     unlock,
@@ -87,22 +89,25 @@ module System.Rados.Base
     writeOperate,
     asyncWriteOperate,
 #endif
+-- ** Helpers
+    missingOK
 ) where
 
-import System.IO.Unsafe (unsafeInterleaveIO)
-import System.Rados.Error
-import qualified System.Rados.FFI as F
-
 import Control.Applicative
-import Control.Exception (bracket, throwIO, onException)
+import Control.Exception (bracket, onException, throwIO)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Unsafe as B
+import Data.UUID
+import Data.UUID.V4
 import Foreign hiding (void)
 import Foreign.C.String
 import Foreign.C.Types
+import System.IO.Unsafe (unsafeInterleaveIO)
 import System.Posix.Types (EpochTime)
+import System.Rados.Error
+import qualified System.Rados.FFI as F
 
 -- | A connection to a rados cluster, required to get an 'IOContext'
 newtype Connection = Connection (Ptr F.RadosT)
@@ -571,6 +576,12 @@ timeValFromRealFrac :: RealFrac n => n -> F.TimeVal
 timeValFromRealFrac n =
     let (seconds, fractional) = properFraction n in
         F.TimeVal seconds (floor $ 1000000 / fractional)
+
+
+-- | Create a random cookie, useful for shared locks.
+newCookie :: IO ByteString
+newCookie = B.pack . toString <$> nextRandom
+
 -- |
 -- Make an exclusive lock
 exclusiveLock
@@ -656,6 +667,7 @@ sharedLock (IOContext ioctx_p) oid name cookie tag desc maybe_duration flags =
                                                  c_desc
                                                  timeval_p
                                                  flag
+
 -- |
 -- Release a lock of any sort
 unlock
@@ -673,9 +685,8 @@ unlock (IOContext ioctx_p) oid name cookie =
                              c_oid
                              c_name
                              c_cookie
-
 -- |
--- Begin objects for pool.
+-- Begin listing objects in pool.
 --
 -- Ensure that you call closeList. Preferably use withList.
 --
@@ -855,3 +866,9 @@ asyncWriteOperate (WriteOperation o) (IOContext ioctx_p)
         checkError' "rados_aio_write_op_operate" $
             F.c_rados_aio_write_op_operate ofp ioctx_p cmp_p c_oid nullPtr
 #endif
+
+-- | Take a Maybe Rados Error, if it's anything but NoEntity throw it,
+missingOK :: Maybe RadosError -> IO ()
+missingOK Nothing = return ()
+missingOK (Just (NoEntity {})) = return ()
+missingOK (Just e) = throwIO e

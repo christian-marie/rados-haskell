@@ -21,7 +21,7 @@ module System.Rados.Error
 ) where
 
 import Control.Exception
-import Control.Monad.Error
+import Control.Monad
 import Data.Typeable
 import Foreign.C.Error
 import Foreign.C.String
@@ -35,8 +35,8 @@ data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
                            , strerror  :: String -- ^ The \"nice\" error message.
                            }
                 -- | Usually returned if a file does not exist
-                | NoEntity { errno     :: Int    
-                           , cFunction :: String 
+                | NoEntity { errno     :: Int
+                           , cFunction :: String
                            , strerror  :: String
                            }
                 -- | Returned if a file already exists, and should not.
@@ -59,9 +59,6 @@ data RadosError = Unknown  { errno     :: Int    -- ^ Error number (positive)
     deriving (Eq, Ord, Typeable)
 
 
-instance Error RadosError where
-    strMsg err = User err
-
 instance Show RadosError where
     show Unknown{..} = "rados: unknown rados error in '" ++
         cFunction ++ "', errno " ++ show errno ++ ": '" ++ strerror ++ "'"
@@ -69,6 +66,7 @@ instance Show RadosError where
     show Exists{..} = cFunction ++ ": EEXIST: '" ++ strerror ++ "'"
     show Canceled{..} = cFunction ++ ": ECANCELED: '" ++ strerror ++ "'"
     show Range{..} = cFunction ++ ": ERANGE: '" ++ strerror ++ "'"
+    show User{..} = "Rados user error: '" ++ message ++ "'"
 
 instance Exception RadosError
 
