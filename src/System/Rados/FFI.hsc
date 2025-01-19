@@ -268,20 +268,21 @@ foreign import ccall safe "librados.h rados_lock_shared"
         -> LockFlag
         -> IO CInt
 
-foreign import ccall safe "librados.h rados_objects_list_open"
-    c_rados_objects_list_open
+foreign import ccall safe "librados.h rados_nobjects_list_open"
+    c_rados_nobjects_list_open
         :: Ptr RadosIOCtxT
         -> Ptr (Ptr RadosListCtxT)
         -> IO CInt
 
-foreign import ccall unsafe "librados.h rados_objects_list_close"
-    c_rados_objects_list_close
+foreign import ccall unsafe "librados.h rados_nobjects_list_close"
+    c_rados_nobjects_list_close
         :: Ptr RadosListCtxT
         -> IO ()
 
-foreign import ccall safe "librados.h rados_objects_list_next"
-    c_rados_objects_list_next
+foreign import ccall safe "librados.h rados_nobjects_list_next"
+    c_rados_nobjects_list_next
         :: Ptr RadosListCtxT
+        -> Ptr CString
         -> Ptr CString
         -> Ptr CString
         -> IO CInt

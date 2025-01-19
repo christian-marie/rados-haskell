@@ -691,22 +691,22 @@ unlock (IOContext ioctx_p) oid name cookie =
 -- Ensure that you call closeList. Preferably use withList.
 --
 -- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_open>
+-- <http://docs.ceph.com/docs/master/rados/api/librados/#c.rados_nobjects_list_open>
 openList :: IOContext -> IO ListContext
 openList (IOContext ioctx_p) =
     alloca $ \list_p_p -> do
-        checkError_ "rados_objects_list_open" $
-                F.c_rados_objects_list_open ioctx_p list_p_p
+        checkError_ "rados_nobjects_list_open" $
+                F.c_rados_nobjects_list_open ioctx_p list_p_p
         ListContext <$> peek list_p_p
 
 -- |
 -- Close a listing context.
 --
 -- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_close>
+-- <http://docs.ceph.com/docs/master/rados/api/librados/#c.rados_nobjects_list_close>
 closeList :: ListContext -> IO ()
 closeList (ListContext list_p) =
-    F.c_rados_objects_list_close list_p
+    F.c_rados_nobjects_list_close list_p
 
 -- |
 -- Perform an action with a list context, safely cleaning up with bracket
@@ -717,12 +717,12 @@ withList io_ctx = bracket (openList io_ctx) closeList
 -- Return the next OID in the pool, Nothing for end of stream.
 --
 -- Calls:
--- <http://ceph.com/docs/master/rados/api/librados/#rados_objects_list_next>
+-- <http://docs.ceph.com/docs/master/rados/api/librados/#c.rados_nobjects_list_next>
 nextObject :: ListContext -> IO (Maybe ByteString)
 nextObject (ListContext list_p) =
     alloca $ \string_p -> do
-        me <- maybeError "c_rados_objects_list_next" $
-            F.c_rados_objects_list_next list_p string_p nullPtr
+        me <- maybeError "c_rados_nobjects_list_next" $
+            F.c_rados_nobjects_list_next list_p string_p nullPtr nullPtr
         case me of
             Just (NoEntity{}) -> return Nothing
             Just e            -> throwIO e
